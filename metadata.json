@@ -1,0 +1,9 @@
+{
+  "name": "Liddy",
+  "description": "Your intelligent financial companion for smarter money decisions. Features AI-powered budgeting, receipt scanning, real-time financial advice, and goal visualization.",
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "y7": [],
+  "Yp": []
+}

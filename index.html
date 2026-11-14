@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Liddy — Everyday Money, Investments &amp; Smart Financial Workspace</title>
+    <meta name="description" content="Track your personal daily expenses, update your stock broker portfolio balance, export formatted A4, Letter &amp; 80mm thermal invoices, follow live financial news, and collaborate in live video rooms." />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="/" />
+
+    <!-- OpenGraph Social & Discovery Metadata -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Liddy" />
+    <meta property="og:title" content="Liddy — Everyday Money, Investments &amp; Smart Financial Workspace" />
+    <meta property="og:description" content="Daily expense tracking, connected stock broker portfolio balance, multi-format invoices with Gmail receipts, live market news, and HD video rooms." />
+
+    <!-- Twitter / X Summary Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Liddy — Everyday Money, Investments &amp; Smart Financial Workspace" />
+    <meta name="twitter:description" content="Track everyday expenses, stock investments, formatted invoices, live market news, and team video rooms." />
+
+    <!-- AEO & Structured Rich Snippets (JSON-LD) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "name": "Liddy",
+            "description": "General-purpose everyday personal finance, stock portfolio tracking, multi-format invoicing, live market news, and collaborative studio workspace."
+          },
+          {
+            "@type": "SoftwareApplication",
+            "name": "Liddy Daily Financial Workspace",
+            "applicationCategory": "FinanceApplication",
+            "operatingSystem": "Web, iOS, Android",
+            "offers": [
+              {
+                "@type": "Offer",
+                "name": "Starter Free",
+                "price": "0",
+                "priceCurrency": "USD"
+              },
+              {
+                "@type": "Offer",
+                "name": "Liddy Pro",
+                "price": "12",
+                "priceCurrency": "USD"
+              },
+              {
+                "@type": "Offer",
+                "name": "Studio Team",
+                "price": "29",
+                "priceCurrency": "USD"
+              }
+            ],
+            "featureList": "Personal Expense Breakdown, Stock Broker Portfolio Tracker, A4/Letter/80mm Thermal Invoicing, Gmail Invoice Receipts, Live Market News Feed, Vision Studio & Live Video Rooms"
+          },
+          {
+            "@type": "FAQPage",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Who is Liddy built for?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Liddy is designed for everyone—track everyday spending, monitor your connected stock broking balance, create formatted invoices, read real-time financial news, and collaborate in live video rooms."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How do multi-format digital invoices and email receipts work?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Choose from Classic, Minimal, or Corporate Tax templates across A4, US Letter, or 80mm thermal paper formats, preview before downloading PDF or HTML, embed UPI QR links, and send formatted receipts via Gmail."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What can teams do inside Vision?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Vision provides interactive mind mapping, slide presentation creation exported to PowerPoint, PDF, or Markdown, and live video, audio, and screen-share conference rooms."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What is included in Liddy Pro vs Starter Free?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Starter Free includes personal expense tracking, stock broker balance tracking, 10 monthly invoices, 15 smart receipt scans, and live market news. Liddy Pro ($12/month or ₹999/month via verified UPI or cards) removes ads and unlocks unlimited invoices, Gmail receipts, and PowerPoint/PDF exports."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+              display: ['Outfit', 'Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+              mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+            },
+            colors: {
+              background: '#F5F5F7',
+              surface: '#FFFFFF',
+              primary: '#1D1D1F',
+              secondary: '#6B7280',
+              accent: '#4F46E5',
+              'accent-hover': '#4338CA',
+            },
+            boxShadow: {
+              'soft': '0 4px 20px -2px rgba(0, 0, 0, 0.05)',
+              'glow': '0 0 40px -10px rgba(79, 70, 229, 0.28)',
+              'glass': '0 8px 32px 0 rgba(31, 38, 135, 0.07)',
+            },
+            animation: {
+              'float': 'float 6s ease-in-out infinite',
+              'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+              'enter': 'enter 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+            },
+            keyframes: {
+              float: {
+                '0%, 100%': { transform: 'translateY(0)' },
+                '50%': { transform: 'translateY(-10px)' },
+              },
+              enter: {
+                '0%': { opacity: '0', transform: 'translateY(8px) scale(0.99)' },
+                '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+      body { 
+        font-family: 'Plus Jakarta Sans', sans-serif; 
+        background-color: #F6F6F4;
+        color: #111114;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      h1, h2, h3, .font-display {
+        font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+        text-wrap: balance;
+      }
+
+      .dark {
+        color-scheme: dark;
+      }
+
+      .dark body {
+        background-color: #09090B;
+        color: #F4F4F5;
+      }
+
+      /* Optical compensation for dark mode legibility */
+      .dark .text-neutral-400 {
+        color: #A1A1AA;
+      }
+      .dark .text-neutral-500 {
+        color: #D4D4D8;
+      }
+      
+      .glass {
+        background: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(17, 17, 20, 0.08);
+      }
+
+      .dark .glass {
+        background: rgba(20, 20, 24, 0.86);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .glass-card {
+        background: rgba(255, 255, 255, 0.94);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(17, 17, 20, 0.08);
+        box-shadow: 0 2px 14px -2px rgba(0, 0, 0, 0.04);
+      }
+
+      .dark .glass-card {
+        background: rgba(20, 20, 24, 0.92);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.45);
+      }
+
+      .dark .bg-neutral-850,
+      .dark [class*="neutral-850"] {
+        background-color: #141418 !important;
+      }
+      .dark .border-neutral-750,
+      .dark [class*="neutral-750"] {
+        border-color: rgba(255, 255, 255, 0.12) !important;
+      }
+
+      .hover-border-glow,
+      .glass-card,
+      .modal-inner-card,
+      .user-profile-card,
+      .market-stock-card,
+      .nav-item-btn {
+        transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .hover-border-glow:hover,
+      .glass-card:hover,
+      .modal-inner-card:hover,
+      .user-profile-card:hover,
+      .market-stock-card:hover {
+        border-color: rgba(56, 189, 248, 0.55) !important;
+        box-shadow: 0 8px 24px -6px rgba(56, 189, 248, 0.18) !important;
+      }
+
+      .dark .dark-card,
+      .dark .modal-card,
+      .dark .user-profile-card,
+      .dark .modal-inner-card {
+        background-color: #141418 !important;
+        border-color: rgba(255, 255, 255, 0.1) !important;
+        color: #F4F4F5 !important;
+      }
+
+      .dark .user-profile-card p,
+      .dark .modal-inner-card p {
+        color: #E4E4E7;
+      }
+
+      .dark .user-profile-footer {
+        background-color: #101014 !important;
+        border-top-color: rgba(255, 255, 255, 0.08) !important;
+      }
+
+      /* Stealth Google Translate Styles */
+      .goog-te-banner-frame.skiptranslate,
+      .goog-te-banner-frame,
+      #goog-gt-tt,
+      .goog-te-balloon-frame,
+      .goog-tooltip,
+      .goog-tooltip:hover,
+      .goog-te-spinner-pos,
+      #google_translate_element,
+      iframe.skiptranslate,
+      .skiptranslate,
+      div[class*="VIpgJd"],
+      iframe[class*="VIpgJd"],
+      div[id*="goog-gt-"],
+      .goog-te-gadget,
+      .goog-te-combo {
+        display: none !important;
+        visibility: hidden !important;
+        height: 0 !important;
+        width: 0 !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        position: absolute !important;
+        left: -9999px !important;
+        top: -9999px !important;
+        z-index: -9999 !important;
+      }
+      html, body {
+        top: 0px !important;
+        position: static !important;
+      }
+      font,
+      font[color],
+      .goog-text-highlight {
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+        border: none !important;
+        color: inherit !important;
+      }
+
+      .high-contrast {
+        filter: contrast(115%);
+      }
+      @keyframes feature-marquee {
+        0% {
+          transform: translate3d(0, 0, 0);
+        }
+        100% {
+          transform: translate3d(-50%, 0, 0);
+        }
+      }
+      .feature-marquee-track {
+        display: flex;
+        width: max-content;
+        animation: feature-marquee 42s linear infinite;
+        will-change: transform;
+      }
+      .feature-marquee-shell:hover .feature-marquee-track,
+      .feature-marquee-shell:focus-within .feature-marquee-track {
+        animation-play-state: paused;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .feature-marquee-shell {
+          overflow-x: auto;
+        }
+        .feature-marquee-track {
+          animation: none !important;
+          transform: none !important;
+        }
+      }
+      .reduced-motion .feature-marquee-shell {
+        overflow-x: auto;
+      }
+      .reduced-motion .feature-marquee-track {
+        animation: none !important;
+        transform: none !important;
+      }
+      .reduced-motion *,
+      .reduced-motion *::before,
+      .reduced-motion *::after {
+        animation-duration: 0.001s !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001s !important;
+        scroll-behavior: auto !important;
+      }
+
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #D1D1D6;
+        border-radius: 4px;
+      }
+      .dark ::-webkit-scrollbar-thumb {
+        background: #3F3F46;
+      }
+      .no-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .no-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+    </style>
+    <script type="text/javascript">
+      function googleTranslateElementInit() {
+        if (window.google && window.google.translate) {
+          new window.google.translate.TranslateElement({
+            pageLanguage: 'en',
+            includedLanguages: 'en,hi,bn,mr,te,ta,gu,ur,kn,or,ml,pa,as,zh-CN,es,fr,ar,fa,de,ja,ru,it,pt',
+            autoDisplay: false
+          }, 'google_translate_element');
+        }
+      }
+    </script>
+    <script type="text/javascript" src="https://translate.google.com/translate_a/element.js?cb=googleTranslateElementInit" async defer></script>
+  </head>
+  <body>
+    <div id="google_translate_element" style="display:none;position:absolute;left:-9999px;"></div>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,625 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and identity metadata",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "displayName", "createdAt"]
+    },
+    "UserPreferences": {
+      "title": "UserPreferences",
+      "description": "Synchronized watchlist, currency, language, monetization plan, and display settings",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "watchlist": {
+          "type": "array"
+        },
+        "currencySymbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8
+        },
+        "currencyPlacement": {
+          "type": "string",
+          "enum": ["before", "after"]
+        },
+        "themeMode": {
+          "type": "string",
+          "enum": ["system", "light", "dark"]
+        },
+        "currentLanguage": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
+        "planTier": {
+          "type": "string",
+          "enum": ["free", "pro", "team"]
+        },
+        "adFree": {
+          "type": "boolean"
+        },
+        "organizationId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "watchlist", "currencySymbol", "currencyPlacement", "updatedAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "User financial transaction record",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "date": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "merchant": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "amount": {
+          "type": "number"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["completed", "pending"]
+        },
+        "paymentMethod": {
+          "type": "string",
+          "enum": ["UPI", "CARD", "CASH", "SCAN_RECEIPT", "INVOICE"]
+        },
+        "invoiceId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "upiReference": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "date", "merchant", "amount", "category", "status", "createdAt", "updatedAt"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "User digital invoice and UPI payment record",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "invoiceNumber": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "date": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32
+        },
+        "dueDate": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "senderName": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "senderDetails": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "senderTaxId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "clientName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "clientDetails": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "clientEmail": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "clientTaxId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "industry": {
+          "type": "string",
+          "enum": ["RETAIL", "TECH", "DINING", "HEALTHCARE", "SERVICES"]
+        },
+        "templateStyle": {
+          "type": "string",
+          "enum": ["classic", "minimal", "corporate"]
+        },
+        "paperFormat": {
+          "type": "string",
+          "enum": ["a4", "letter", "thermal80"]
+        },
+        "items": {
+          "type": "array"
+        },
+        "subtotal": {
+          "type": "number"
+        },
+        "taxTotal": {
+          "type": "number"
+        },
+        "discountTotal": {
+          "type": "number"
+        },
+        "grandTotal": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "upiId": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "payeeName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "paymentStatus": {
+          "type": "string",
+          "enum": ["unpaid", "paid", "pending"]
+        },
+        "paidAt": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "invoiceNumber", "date", "clientName", "industry", "items", "subtotal", "taxTotal", "discountTotal", "grandTotal", "currency", "paymentStatus", "createdAt", "updatedAt"]
+    },
+    "StockPortfolio": {
+      "title": "StockPortfolio",
+      "description": "User connected stock broking app portfolio balance and manual holdings",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "brokerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "totalValue": {
+          "type": "number"
+        },
+        "totalInvested": {
+          "type": "number"
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "holdings": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "brokerName", "totalValue", "totalInvested", "currency", "holdings", "updatedAt"]
+    },
+    "Goal": {
+      "title": "Goal",
+      "description": "User financial goal and visual asset",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "visualUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 700000
+        },
+        "type": {
+          "type": "string",
+          "enum": ["IMAGE", "VIDEO"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "title", "visualUrl", "type", "createdAt"]
+    },
+    "Organization": {
+      "title": "Organization",
+      "description": "Founder studio, agency, or creator organization workspace tracked in the admin console",
+      "type": "object",
+      "properties": {
+        "orgId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "industry": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "planTier": {
+          "type": "string",
+          "enum": ["free", "pro", "team", "enterprise"]
+        },
+        "seatCount": {
+          "type": "number"
+        },
+        "monthlyRevenueUsd": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "trial", "paused", "churned"]
+        },
+        "ownerUserId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "billingEmail": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["orgId", "name", "industry", "planTier", "seatCount", "monthlyRevenueUsd", "status", "ownerUserId", "createdAt", "updatedAt"]
+    },
+    "AnalyticsEvent": {
+      "title": "AnalyticsEvent",
+      "description": "Structured usage, monetization, and conversion event tracked for platform analytics",
+      "type": "object",
+      "properties": {
+        "eventType": {
+          "type": "string",
+          "enum": ["feature_view", "invoice_created", "ocr_scan", "voice_session", "ad_impression", "affiliate_click", "pro_upgrade", "org_created", "vision_collab"]
+        },
+        "featureWindow": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "organizationId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "metadata": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "revenueImpactUsd": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["eventType", "featureWindow", "userId", "createdAt"]
+    },
+    "GatewayPayment": {
+      "title": "GatewayPayment",
+      "description": "Hyperswitch payment transaction record across India and international rails",
+      "type": "object",
+      "properties": {
+        "paymentId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userEmail": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "userName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "planTier": {
+          "type": "string",
+          "enum": ["free", "pro", "team"]
+        },
+        "billingCycle": {
+          "type": "string",
+          "enum": ["monthly", "annual"]
+        },
+        "region": {
+          "type": "string",
+          "enum": ["IN", "INTL"]
+        },
+        "currency": {
+          "type": "string",
+          "enum": ["INR", "USD", "EUR", "GBP"]
+        },
+        "amount": {
+          "type": "number"
+        },
+        "amountUsdEquivalent": {
+          "type": "number"
+        },
+        "paymentRail": {
+          "type": "string",
+          "enum": ["UPI_QR", "UPI_ID", "CARD", "NETBANKING", "WALLET"]
+        },
+        "connector": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["succeeded", "processing", "requires_action", "failed"]
+        },
+        "referenceCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["paymentId", "userId", "planTier", "billingCycle", "region", "currency", "amount", "amountUsdEquivalent", "paymentRail", "connector", "status", "referenceCode", "createdAt"]
+    },
+    "IdeationBoard": {
+      "title": "IdeationBoard",
+      "description": "Vision collaborative mind map, slide deck, and meeting notes board",
+      "type": "object",
+      "properties": {
+        "boardId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "roomCode": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 40
+        },
+        "ownerUserId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "nodes": {
+          "type": "array"
+        },
+        "slides": {
+          "type": "array"
+        },
+        "meetingNotes": {
+          "type": "array"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["boardId", "title", "roomCode", "ownerUserId", "nodes", "slides", "meetingNotes", "updatedAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized platform administrator allowlist record",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner", "admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "email", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Individual user profile document"
+    },
+    "/users/{userId}/preferences/{prefId}": {
+      "schema": "UserPreferences",
+      "description": "User watchlist, monetization plan, and regional/appearance settings"
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Owner-scoped financial transactions"
+    },
+    "/users/{userId}/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Owner-scoped digital invoices"
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": "Goal",
+      "description": "Owner-scoped wealth goals"
+    },
+    "/users/{userId}/portfolio/{portfolioId}": {
+      "schema": "StockPortfolio",
+      "description": "Owner-scoped stock broking balance and holdings"
+    },
+    "/organizations/{orgId}": {
+      "schema": "Organization",
+      "description": "Tracked organizations and freelancer workspaces managed in admin console"
+    },
+    "/analytics_events/{eventId}": {
+      "schema": "AnalyticsEvent",
+      "description": "Admin-readable activity, ad impression, affiliate, and revenue events"
+    },
+    "/payments/{paymentId}": {
+      "schema": "GatewayPayment",
+      "description": "Hyperswitch payment records readable by payment owner and platform admins"
+    },
+    "/ideation_boards/{boardId}": {
+      "schema": "IdeationBoard",
+      "description": "Collaborative Vision mind map, slide deck, and meeting notes"
+    },
+    "/admins/{userId}": {
+      "schema": "AdminUser",
+      "description": "Authorized platform admin records"
+    }
+  }
+}

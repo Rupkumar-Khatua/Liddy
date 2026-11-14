@@ -1,0 +1,363 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Reusable Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'rupk03793@gmail.com' && request.auth.token.email_verified == true) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['userId', 'displayName', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'displayName', 'email', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && (!('email' in data) || (data.email is string && data.email.size() <= 254))
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 1024))
+        && data.createdAt is timestamp
+        && (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
+    function isValidUserPreferences(data, userId) {
+      return data.keys().hasAll(['userId', 'watchlist', 'currencySymbol', 'currencyPlacement', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'watchlist', 'currencySymbol', 'currencyPlacement', 'themeMode', 'currentLanguage', 'planTier', 'adFree', 'organizationId', 'updatedAt'])
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.watchlist is list && data.watchlist.size() <= 40
+        && (data.watchlist.size() == 0 || (data.watchlist[0] is string && data.watchlist[0].size() <= 24))
+        && data.currencySymbol is string && data.currencySymbol.size() >= 1 && data.currencySymbol.size() <= 8
+        && data.currencyPlacement in ['before', 'after']
+        && (!('themeMode' in data) || data.themeMode in ['system', 'light', 'dark'])
+        && (!('currentLanguage' in data) || (data.currentLanguage is string && data.currentLanguage.size() >= 2 && data.currentLanguage.size() <= 16))
+        && (!('planTier' in data) || data.planTier in ['free', 'pro', 'team'])
+        && (!('adFree' in data) || data.adFree is bool)
+        && (!('organizationId' in data) || (data.organizationId is string && data.organizationId.size() <= 128))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTransaction(data, userId) {
+      return data.keys().hasAll(['userId', 'date', 'merchant', 'amount', 'category', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'date', 'merchant', 'amount', 'category', 'status', 'paymentMethod', 'invoiceId', 'upiReference', 'notes', 'createdAt', 'updatedAt'])
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.date is string && data.date.size() >= 4 && data.date.size() <= 32
+        && data.merchant is string && data.merchant.size() >= 1 && data.merchant.size() <= 160
+        && (data.amount is int || data.amount is float) && data.amount >= 0 && data.amount <= 1000000000
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
+        && data.status in ['completed', 'pending']
+        && (!('paymentMethod' in data) || data.paymentMethod in ['UPI', 'CARD', 'CASH', 'SCAN_RECEIPT', 'INVOICE'])
+        && (!('invoiceId' in data) || (data.invoiceId is string && data.invoiceId.size() <= 128))
+        && (!('upiReference' in data) || (data.upiReference is string && data.upiReference.size() <= 200))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidInvoice(data, userId) {
+      return data.keys().hasAll(['userId', 'invoiceNumber', 'date', 'clientName', 'industry', 'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal', 'currency', 'paymentStatus', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'invoiceNumber', 'date', 'dueDate', 'senderName', 'senderDetails', 'senderTaxId', 'clientName', 'clientDetails', 'clientEmail', 'clientTaxId', 'industry', 'templateStyle', 'paperFormat', 'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal', 'currency', 'notes', 'upiId', 'payeeName', 'paymentStatus', 'paidAt', 'createdAt', 'updatedAt'])
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.invoiceNumber is string && data.invoiceNumber.size() >= 1 && data.invoiceNumber.size() <= 64
+        && data.date is string && data.date.size() >= 4 && data.date.size() <= 32
+        && (!('dueDate' in data) || (data.dueDate is string && data.dueDate.size() <= 32))
+        && (!('senderName' in data) || (data.senderName is string && data.senderName.size() <= 160))
+        && (!('senderDetails' in data) || (data.senderDetails is string && data.senderDetails.size() <= 400))
+        && (!('senderTaxId' in data) || (data.senderTaxId is string && data.senderTaxId.size() <= 64))
+        && data.clientName is string && data.clientName.size() >= 1 && data.clientName.size() <= 160
+        && (!('clientDetails' in data) || (data.clientDetails is string && data.clientDetails.size() <= 400))
+        && (!('clientEmail' in data) || (data.clientEmail is string && data.clientEmail.size() <= 254))
+        && (!('clientTaxId' in data) || (data.clientTaxId is string && data.clientTaxId.size() <= 64))
+        && data.industry in ['RETAIL', 'TECH', 'DINING', 'HEALTHCARE', 'SERVICES']
+        && (!('templateStyle' in data) || data.templateStyle in ['classic', 'minimal', 'corporate'])
+        && (!('paperFormat' in data) || data.paperFormat in ['a4', 'letter', 'thermal80'])
+        && data.items is list && data.items.size() >= 1 && data.items.size() <= 50
+        && data.items[0] is map
+        && (data.subtotal is int || data.subtotal is float) && data.subtotal >= 0 && data.subtotal <= 1000000000
+        && (data.taxTotal is int || data.taxTotal is float) && data.taxTotal >= 0 && data.taxTotal <= 1000000000
+        && (data.discountTotal is int || data.discountTotal is float) && data.discountTotal >= 0 && data.discountTotal <= 1000000000
+        && (data.grandTotal is int || data.grandTotal is float) && data.grandTotal >= 0 && data.grandTotal <= 1000000000
+        && data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 12
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 600))
+        && (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 120))
+        && (!('payeeName' in data) || (data.payeeName is string && data.payeeName.size() <= 120))
+        && data.paymentStatus in ['unpaid', 'paid', 'pending']
+        && (!('paidAt' in data) || (data.paidAt is string && data.paidAt.size() <= 64))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStockPortfolio(data, userId) {
+      return data.keys().hasAll(['userId', 'brokerName', 'totalValue', 'totalInvested', 'currency', 'holdings', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'brokerName', 'totalValue', 'totalInvested', 'currency', 'notes', 'holdings', 'updatedAt'])
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.brokerName is string && data.brokerName.size() >= 1 && data.brokerName.size() <= 80
+        && (data.totalValue is int || data.totalValue is float) && data.totalValue >= 0 && data.totalValue <= 10000000000
+        && (data.totalInvested is int || data.totalInvested is float) && data.totalInvested >= 0 && data.totalInvested <= 10000000000
+        && data.currency is string && data.currency.size() >= 1 && data.currency.size() <= 8
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 400))
+        && data.holdings is list && data.holdings.size() <= 50
+        && (data.holdings.size() == 0 || data.holdings[0] is map)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidGoal(data, userId) {
+      return data.keys().hasAll(['userId', 'title', 'visualUrl', 'type', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'title', 'visualUrl', 'type', 'createdAt'])
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 300
+        && data.visualUrl is string && data.visualUrl.size() >= 1 && data.visualUrl.size() <= 700000
+        && data.type in ['IMAGE', 'VIDEO']
+        && data.createdAt is timestamp;
+    }
+
+    function isValidOrganization(data, orgId) {
+      return data.keys().hasAll(['orgId', 'name', 'industry', 'planTier', 'seatCount', 'monthlyRevenueUsd', 'status', 'ownerUserId', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['orgId', 'name', 'industry', 'planTier', 'seatCount', 'monthlyRevenueUsd', 'status', 'ownerUserId', 'billingEmail', 'notes', 'createdAt', 'updatedAt'])
+        && data.orgId is string && data.orgId == orgId && isValidId(data.orgId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 160
+        && data.industry is string && data.industry.size() >= 1 && data.industry.size() <= 80
+        && data.planTier in ['free', 'pro', 'team', 'enterprise']
+        && (data.seatCount is int || data.seatCount is float) && data.seatCount >= 1 && data.seatCount <= 100000
+        && (data.monthlyRevenueUsd is int || data.monthlyRevenueUsd is float) && data.monthlyRevenueUsd >= 0 && data.monthlyRevenueUsd <= 10000000
+        && data.status in ['active', 'trial', 'paused', 'churned']
+        && data.ownerUserId is string && isValidId(data.ownerUserId)
+        && (!('billingEmail' in data) || (data.billingEmail is string && data.billingEmail.size() <= 254))
+        && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAnalyticsEvent(data) {
+      return data.keys().hasAll(['eventType', 'featureWindow', 'userId', 'createdAt'])
+        && data.keys().hasOnly(['eventType', 'featureWindow', 'userId', 'organizationId', 'metadata', 'revenueImpactUsd', 'createdAt'])
+        && data.eventType in ['feature_view', 'invoice_created', 'ocr_scan', 'voice_session', 'ad_impression', 'affiliate_click', 'pro_upgrade', 'org_created', 'vision_collab']
+        && data.featureWindow is string && data.featureWindow.size() >= 1 && data.featureWindow.size() <= 64
+        && data.userId is string && data.userId == request.auth.uid && isValidId(data.userId)
+        && (!('organizationId' in data) || (data.organizationId is string && data.organizationId.size() <= 128))
+        && (!('metadata' in data) || (data.metadata is string && data.metadata.size() <= 300))
+        && (!('revenueImpactUsd' in data) || ((data.revenueImpactUsd is int || data.revenueImpactUsd is float) && data.revenueImpactUsd >= 0 && data.revenueImpactUsd <= 1000000))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidGatewayPayment(data, paymentId) {
+      return data.keys().hasAll(['paymentId', 'userId', 'planTier', 'billingCycle', 'region', 'currency', 'amount', 'amountUsdEquivalent', 'paymentRail', 'connector', 'status', 'referenceCode', 'createdAt'])
+        && data.keys().hasOnly(['paymentId', 'userId', 'userEmail', 'userName', 'planTier', 'billingCycle', 'region', 'currency', 'amount', 'amountUsdEquivalent', 'paymentRail', 'connector', 'status', 'referenceCode', 'createdAt'])
+        && data.paymentId is string && data.paymentId == paymentId && isValidId(data.paymentId)
+        && data.userId is string && data.userId == request.auth.uid && isValidId(data.userId)
+        && (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 254))
+        && (!('userName' in data) || (data.userName is string && data.userName.size() <= 120))
+        && data.planTier in ['free', 'pro', 'team']
+        && data.billingCycle in ['monthly', 'annual']
+        && data.region in ['IN', 'INTL']
+        && data.currency in ['INR', 'USD', 'EUR', 'GBP']
+        && (data.amount is int || data.amount is float) && data.amount >= 0 && data.amount <= 10000000
+        && (data.amountUsdEquivalent is int || data.amountUsdEquivalent is float) && data.amountUsdEquivalent >= 0 && data.amountUsdEquivalent <= 1000000
+        && data.paymentRail in ['UPI_QR', 'UPI_ID', 'CARD', 'WALLET']
+        && data.connector is string && data.connector.size() >= 1 && data.connector.size() <= 80
+        && data.status in ['succeeded', 'processing', 'requires_action', 'failed']
+        && data.referenceCode is string && data.referenceCode.size() >= 1 && data.referenceCode.size() <= 120
+        && data.createdAt is timestamp;
+    }
+
+    function isValidIdeationBoard(data, boardId) {
+      return data.keys().hasAll(['boardId', 'title', 'roomCode', 'ownerUserId', 'nodes', 'slides', 'meetingNotes', 'updatedAt'])
+        && data.keys().hasOnly(['boardId', 'title', 'roomCode', 'ownerUserId', 'nodes', 'slides', 'meetingNotes', 'updatedAt'])
+        && data.boardId is string && data.boardId == boardId && isValidId(data.boardId)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 160
+        && data.roomCode is string && data.roomCode.size() >= 2 && data.roomCode.size() <= 40
+        && data.ownerUserId is string && isValidId(data.ownerUserId)
+        && data.nodes is list && data.nodes.size() <= 150
+        && data.slides is list && data.slides.size() <= 40
+        && data.meetingNotes is list && data.meetingNotes.size() <= 200
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminUser(data, userId) {
+      return data.keys().hasAll(['userId', 'email', 'role', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'email', 'role', 'createdAt'])
+        && data.userId is string && data.userId == userId && isValidId(data.userId)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.role in ['owner', 'admin']
+        && data.createdAt is timestamp;
+    }
+
+    // 4. Owner-Scoped Collection Match Rules
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(userId) && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoURL', 'updatedAt']);
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      match /preferences/{prefId} {
+        allow get: if isValidId(userId) && isValidId(prefId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(prefId) && isOwner(userId)
+          && isValidUserPreferences(incoming(), userId)
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(prefId) && isOwner(userId)
+          && isValidUserPreferences(incoming(), userId)
+          && incoming().userId == existing().userId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['watchlist', 'currencySymbol', 'currencyPlacement', 'themeMode', 'currentLanguage', 'planTier', 'adFree', 'organizationId', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(prefId) && isOwner(userId);
+      }
+
+      match /transactions/{transactionId} {
+        allow get: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(transactionId) && isOwner(userId)
+          && isValidTransaction(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(transactionId) && isOwner(userId)
+          && isValidTransaction(incoming(), userId)
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['date', 'merchant', 'amount', 'category', 'status', 'paymentMethod', 'upiReference', 'notes', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(transactionId) && isOwner(userId);
+      }
+
+      match /invoices/{invoiceId} {
+        allow get: if isValidId(userId) && isValidId(invoiceId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(invoiceId) && isOwner(userId)
+          && isValidInvoice(incoming(), userId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(invoiceId) && isOwner(userId)
+          && isValidInvoice(incoming(), userId)
+          && existing().paymentStatus != 'paid'
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['dueDate', 'senderName', 'senderDetails', 'senderTaxId', 'clientName', 'clientDetails', 'clientEmail', 'clientTaxId', 'templateStyle', 'paperFormat', 'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal', 'notes', 'upiId', 'payeeName', 'paymentStatus', 'paidAt', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(invoiceId) && isOwner(userId);
+      }
+
+      match /goals/{goalId} {
+        allow get: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(goalId) && isOwner(userId)
+          && isValidGoal(incoming(), userId)
+          && incoming().createdAt == request.time;
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(goalId) && isOwner(userId);
+      }
+
+      match /portfolio/{portfolioId} {
+        allow get: if isValidId(userId) && isValidId(portfolioId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(portfolioId) && isOwner(userId)
+          && isValidStockPortfolio(incoming(), userId)
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(portfolioId) && isOwner(userId)
+          && isValidStockPortfolio(incoming(), userId)
+          && incoming().userId == existing().userId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['brokerName', 'totalValue', 'totalInvested', 'currency', 'notes', 'holdings', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(portfolioId) && isOwner(userId);
+      }
+    }
+
+    // 5. Organization Workspaces (Admin Console + Owner Scoped)
+    match /organizations/{orgId} {
+      allow get: if isValidId(orgId) && (isAdmin() || (isSignedIn() && existing().ownerUserId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.ownerUserId == request.auth.uid);
+      allow create: if isValidId(orgId) && isSignedIn()
+        && isValidOrganization(incoming(), orgId)
+        && (isAdmin() || incoming().ownerUserId == request.auth.uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(orgId) && isSignedIn()
+        && isValidOrganization(incoming(), orgId)
+        && (isAdmin() || (existing().ownerUserId == request.auth.uid && existing().status != 'churned'))
+        && incoming().orgId == existing().orgId
+        && incoming().ownerUserId == existing().ownerUserId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (isAdmin() || incoming().diff(existing()).affectedKeys().hasOnly(['name', 'industry', 'seatCount', 'billingEmail', 'notes', 'updatedAt']));
+      allow delete: if isValidId(orgId) && isAdmin();
+    }
+
+    // 6. Platform Analytics Events (Authenticated Append-Only Write, Strict Admin Read)
+    match /analytics_events/{eventId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(eventId) && isSignedIn()
+        && isValidAnalyticsEvent(incoming())
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // 7. Hyperswitch Payment Records (Owner Read/Create, Admin Audit)
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(paymentId) && isSignedIn()
+        && isValidGatewayPayment(incoming(), paymentId)
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // 8. Vision Ideation Boards (Owner & Authenticated Workspace Sync)
+    match /ideation_boards/{boardId} {
+      allow get: if isValidId(boardId) && (isAdmin() || (isSignedIn() && existing().ownerUserId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.ownerUserId == request.auth.uid);
+      allow create: if isValidId(boardId) && isSignedIn()
+        && isValidIdeationBoard(incoming(), boardId)
+        && (incoming().ownerUserId == request.auth.uid || isAdmin())
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(boardId) && isSignedIn()
+        && isValidIdeationBoard(incoming(), boardId)
+        && (existing().ownerUserId == request.auth.uid || isAdmin())
+        && incoming().boardId == existing().boardId
+        && incoming().ownerUserId == existing().ownerUserId
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(boardId) && (isAdmin() || (isSignedIn() && existing().ownerUserId == request.auth.uid));
+    }
+
+    // 9. Admin Allowlist
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId) && isAdmin()
+        && isValidAdminUser(incoming(), userId)
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}
