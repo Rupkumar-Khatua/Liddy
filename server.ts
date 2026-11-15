@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI, Type, Modality, type LiveServerMessage } from '@google/genai';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1731,8 +1732,8 @@ app.post('/api/payments/create-intent', async (req, res) => {
       CARD: region === 'IN' ? 'in_cards' : 'global_cards',
     };
 
-    let paymentId = `pay_hs_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    let clientSecret = `${paymentId}_secret_${Math.random().toString(36).slice(2, 10)}`;
+    let paymentId = `pay_hs_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    let clientSecret = `${paymentId}_secret_${crypto.randomBytes(8).toString('hex')}`;
     const hyperswitchBase = process.env.HYPERSWITCH_URL || 'https://sandbox.hyperswitch.io';
     const hyperswitchKey = process.env.HYPERSWITCH_API_KEY;
 
