@@ -28,11 +28,7 @@ export const NewsDetailModal: React.FC<NewsDetailModalProps> = ({ news, onClose 
 
   if (!news) return null;
 
-  const handleOpenSource = () => {
-    trackEngagement(`External News Read: ${news.source}`);
-    const destination = news.url || `https://news.google.com/search?q=${encodeURIComponent(news.title)}`;
-    window.open(destination, '_blank', 'noopener,noreferrer');
-  };
+  const externalNewsUrl = news.url || `https://news.google.com/search?q=${encodeURIComponent(news.title)}`;
 
   const modalContent = (
     <div 
@@ -107,7 +103,7 @@ export const NewsDetailModal: React.FC<NewsDetailModalProps> = ({ news, onClose 
                   {news.impact || 'MACROECONOMIC IMPACT'}
                 </span>
                 <p className="text-neutral-500 dark:text-neutral-400 mt-2 leading-relaxed">
-                  Active policy developments directly influence sovereign debt yields, institutional cash allocations, and equity sector multiples.
+                  Active policy developments directly influence sovereign debt yields, institutional cash allocations and equity sector multiples.
                 </p>
               </div>
 
@@ -119,7 +115,7 @@ export const NewsDetailModal: React.FC<NewsDetailModalProps> = ({ news, onClose 
                   EQUITIES & LIQUID RESERVES
                 </span>
                 <p className="text-neutral-500 dark:text-neutral-400 mt-2 leading-relaxed">
-                  Cross-asset volatility may adjust quarterly treasury projections, inventory financing terms, and foreign exchange hedges.
+                  Cross-asset volatility may adjust quarterly treasury projections, inventory financing terms and foreign exchange hedges.
                 </p>
               </div>
             </div>
@@ -137,13 +133,16 @@ export const NewsDetailModal: React.FC<NewsDetailModalProps> = ({ news, onClose 
           <span className="text-xs text-neutral-400 font-mono">Real-Time Market Dispatch</span>
 
           <div className="flex items-center gap-2.5">
-            <button
-              onClick={handleOpenSource}
+            <a
+              href={externalNewsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => trackEngagement(`External News Read: ${news.source}`)}
               className="px-5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer hover-border-glow"
             >
               <span>{t('news.read_full', `Read Full Article on ${news.source}`)}</span>
               <span>↗</span>
-            </button>
+            </a>
             <button
               onClick={onClose}
               className="px-5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-bold text-neutral-700 dark:text-neutral-300 transition-colors cursor-pointer"

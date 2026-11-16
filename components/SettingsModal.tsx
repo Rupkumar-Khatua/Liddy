@@ -157,8 +157,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
           <div className="flex items-center gap-3">
             <Logo size="sm" showText={false} />
             <div>
-              <h2 id="settings-title" className="text-xl font-extrabold tracking-tight">Workspace Settings &amp; Governance</h2>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">Manage themes, languages, regional currency formatting, and sovereign data privacy.</p>
+              <h2 id="settings-title" className="text-xl font-extrabold tracking-tight">Workspace Settings</h2>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Manage themes, currency display, languages and privacy.</p>
             </div>
           </div>
           {!isFullScreen && (
@@ -176,11 +176,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
         {/* Tab Navigation */}
         <div className="px-6 pt-3 flex gap-2 border-b border-neutral-100 dark:border-neutral-800 overflow-x-auto no-scrollbar">
           {[
-            { id: 'APPEARANCE' as const, label: 'Appearance & Themes', icon: '🎨' },
-            { id: 'LANGUAGE' as const, label: 'Language & Locale', icon: '🌐' },
-            { id: 'ACCOUNT' as const, label: 'Account & Custody', icon: '👤' },
-            { id: 'PRIVACY' as const, label: 'Privacy & Regulatory Papers', icon: '🛡️' },
-            { id: 'ABOUT' as const, label: 'About Us', icon: '🏛️' },
+            { id: 'APPEARANCE' as const, label: 'Appearance', icon: '🎨' },
+            { id: 'LANGUAGE' as const, label: 'Language', icon: '🌐' },
+            { id: 'ACCOUNT' as const, label: 'Account', icon: '👤' },
+            { id: 'PRIVACY' as const, label: 'Privacy & Compliance', icon: '🛡️' },
+            { id: 'ABOUT' as const, label: 'About', icon: '🏛️' },
           ].map(tab => (
             <button
               key={tab.id}
@@ -562,7 +562,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                       Strict Zero-Baseline Data Purge
                     </h4>
                     <p className="text-xs text-red-700 dark:text-red-400 mt-1">
-                      Permanently wipe all stored transactions, digital invoices, and cached telemetry. Returns the entire system to an absolute 0.00 baseline.
+                      Permanently wipe all stored transactions, digital invoices and cached telemetry. Returns the entire system to an absolute 0.00 baseline.
                     </p>
                   </div>
                 </div>
@@ -596,7 +596,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                       Delete Account & Permanent Erasure
                     </h4>
                     <p className="text-xs text-red-800 dark:text-red-400 mt-1 leading-relaxed">
-                      Permanently purge all financial ledger transactions, invoices, watchlist tickers, and identity records. This action cannot be reversed.
+                      Permanently purge all financial ledger transactions, invoices, watchlist tickers and identity records. This action cannot be reversed.
                     </p>
                   </div>
                   {!showDeleteConfirm ? (
@@ -670,7 +670,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                   <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200">
                     <div className="font-bold text-sm mb-1">🛡️ Sovereign Custody Guarantee</div>
                     <p>
-                      The Liddy platform operates on a strict non-custodial, client-partitioned architecture. Your transactional records, invoices, itemized bills, and UPI keys remain under your sovereign control. We do not sell personal telemetry, license spending behavior to brokers, or train public AI models on your customer receipts.
+                      The Liddy platform operates on a strict non-custodial, client-partitioned architecture. Your transactional records, invoices, itemized bills and UPI keys remain under your sovereign control. We do not sell personal telemetry, license spending behavior to brokers or train public AI models on your customer receipts.
                     </p>
                   </div>
 
@@ -687,7 +687,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
 
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <div className="font-bold text-neutral-900 dark:text-white mb-1">Zero Tracking Telemetry</div>
-                      <p className="text-neutral-500 dark:text-neutral-400">No cross-site tracking pixels, fingerprinting beacons, or ad networks. Performance analytics are strictly anonymized and local.</p>
+                      <p className="text-neutral-500 dark:text-neutral-400">No cross-site tracking pixels, fingerprinting beacons or ad networks. Performance analytics are strictly anonymized and local.</p>
                     </div>
                   </div>
                 </div>
@@ -712,7 +712,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <h5 className="font-bold text-neutral-900 dark:text-white">Article 5 & 6 — Lawfulness, Fairness & Purpose Limitation</h5>
                       <p className="text-neutral-500 dark:text-neutral-400 mt-1">
-                        Financial data processing is grounded exclusively upon Contractual Necessity (Art. 6(1)(b)) to fulfill ledger calculation, scanning, and digital invoicing requested directly by the user. Personal data is never repurposed for secondary monetization.
+                        Financial data processing is grounded exclusively upon Contractual Necessity (Art. 6(1)(b)) to fulfill ledger calculation, scanning and digital invoicing requested directly by the user. Personal data is never repurposed for secondary monetization.
                       </p>
                     </div>
 
@@ -726,7 +726,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <h5 className="font-bold text-neutral-900 dark:text-white">DORA Regulation (EU) 2022/2554 Resilience Framework</h5>
                       <p className="text-neutral-500 dark:text-neutral-400 mt-1">
-                        ICT risk management mechanisms incorporate real-time zero-baseline sanitization, client-side cryptographic encapsulation, and zero dependency on unverified third-party scripts.
+                        ICT risk management mechanisms incorporate real-time zero-baseline sanitization, client-side cryptographic encapsulation and zero dependency on unverified third-party scripts.
                       </p>
                     </div>
                   </div>
@@ -744,7 +744,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                       </h4>
                     </div>
                     <p className="text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                      Comprehensive research on India's DPDP Act 2023, RBI Master Directions on IT Governance (2023), and NPCI Unified Payments Interface (UPI) Procedural Guidelines.
+                      Comprehensive research on India's DPDP Act 2023, RBI Master Directions on IT Governance (2023) and NPCI Unified Payments Interface (UPI) Procedural Guidelines.
                     </p>
                   </div>
 
@@ -784,7 +784,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                       </h4>
                     </div>
                     <p className="text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                      Standards aligned with California Consumer Privacy Act (CCPA) as amended by the California Privacy Rights Act (CPRA), the FTC Safeguards Rule (16 CFR Part 314), and GLBA consumer financial privacy protections.
+                      Standards aligned with California Consumer Privacy Act (CCPA) as amended by the California Privacy Rights Act (CPRA), the FTC Safeguards Rule (16 CFR Part 314) and GLBA consumer financial privacy protections.
                     </p>
                   </div>
 
@@ -792,14 +792,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <h5 className="font-bold text-neutral-900 dark:text-white">CCPA / CPRA — "Do Not Sell or Share My Personal Information"</h5>
                       <p className="text-neutral-500 dark:text-neutral-400 mt-1">
-                        Liddy unequivocally does NOT sell or share personal information (including financial records, merchant receipts, or invoice line items) for cross-context behavioral advertising.
+                        Liddy unequivocally does NOT sell or share personal information (including financial records, merchant receipts or invoice line items) for cross-context behavioral advertising.
                       </p>
                     </div>
 
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <h5 className="font-bold text-neutral-900 dark:text-white">GLBA Safeguards Rule (16 CFR Part 314) Compliance</h5>
                       <p className="text-neutral-500 dark:text-neutral-400 mt-1">
-                        Technical safeguards maintain administrative and system access controls protecting customer non-public personal information (NPI) from unauthorized access, loss, or manipulation.
+                        Technical safeguards maintain administrative and system access controls protecting customer non-public personal information (NPI) from unauthorized access, loss or manipulation.
                       </p>
                     </div>
                   </div>
@@ -825,7 +825,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <h5 className="font-bold text-neutral-900 dark:text-white">Japan APPI (PPC Regulations)</h5>
                       <p className="text-neutral-500 dark:text-neutral-400 mt-1">
-                        Compliance with Personal Information Protection Commission (PPC) requirements regarding explicit purpose specification, restriction on third-party transfers, and individual disclosure entitlements.
+                        Compliance with Personal Information Protection Commission (PPC) requirements regarding explicit purpose specification, restriction on third-party transfers and individual disclosure entitlements.
                       </p>
                     </div>
 
@@ -855,28 +855,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <div className="font-bold text-neutral-900 dark:text-white mb-1">1. Non-Investment Advisory Disclaimer</div>
                       <p className="text-neutral-500 dark:text-neutral-400">
-                        The Liddy platform is a financial computation and ledger visualization tool. Information, market feeds, stock directory metrics, and mathematical projections rendered in this software do NOT constitute financial, investment, legal, or tax advice. Users are solely responsible for verifying exchange quotes and financial decisions.
+                        The Liddy platform is a financial computation and ledger visualization tool. Information, market feeds, stock directory metrics and mathematical projections rendered in this software do NOT constitute financial, investment, legal or tax advice. Users are solely responsible for verifying exchange quotes and financial decisions.
                       </p>
                     </div>
 
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <div className="font-bold text-neutral-900 dark:text-white mb-1">2. Non-Custodial Open Payments & Invoicing</div>
                       <p className="text-neutral-500 dark:text-neutral-400">
-                        Liddy provides software tools to compile digital invoices and generate standard UPI protocol strings. Liddy is not a licensed payment gateway, bank, or escrow depository. All transaction settlements execute strictly between your financial institution and your counterparty.
+                        Liddy provides software tools to compile digital invoices and generate standard UPI protocol strings. Liddy is not a licensed payment gateway, bank or escrow depository. All transaction settlements execute strictly between your financial institution and your counterparty.
                       </p>
                     </div>
 
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <div className="font-bold text-neutral-900 dark:text-white mb-1">3. Software License & Intellectual Property</div>
                       <p className="text-neutral-500 dark:text-neutral-400">
-                        Liddy grants you a non-exclusive, revocable, non-transferable license to utilize the application for personal and enterprise record keeping. All software architecture, vector marks, and visual systems remain proprietary intellectual property.
+                        Liddy grants you a non-exclusive, revocable, non-transferable license to utilize the application for personal and enterprise record keeping. All software architecture, vector marks and visual systems remain proprietary intellectual property.
                       </p>
                     </div>
 
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <div className="font-bold text-neutral-900 dark:text-white mb-1">4. Limitation of Liability & Indemnification</div>
                       <p className="text-neutral-500 dark:text-neutral-400">
-                        To the maximum extent permitted by applicable law, Liddy and its developers shall not be liable for indirect, incidental, or consequential damages resulting from transaction reconciliation delays, third-party network outages, or device loss.
+                        To the maximum extent permitted by applicable law, Liddy and its developers shall not be liable for indirect, incidental or consequential damages resulting from transaction reconciliation delays, third-party network outages or device loss.
                       </p>
                     </div>
                   </div>
@@ -893,7 +893,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                 <Logo size="md" className="mb-4" />
                 <h3 className="text-base font-bold text-neutral-900 dark:text-white">The Liddy Platform</h3>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-                  Liddy is a modern financial telemetry platform engineered for people who demand real numbers, verifiable global market feeds, and zero synthetic placeholders.
+                  Liddy is a modern financial telemetry platform engineered for people who demand real numbers, verifiable global market feeds and zero synthetic placeholders.
                 </p>
               </div>
 
@@ -906,11 +906,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                   </div>
                   <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                     <div className="font-bold text-neutral-900 dark:text-white mb-1">Open UPI & Standard Billing</div>
-                    <p className="text-neutral-500 dark:text-neutral-400">Native dynamic QR generation with standard VPA interoperability, industry templates, and automatic settlement reconciliation.</p>
+                    <p className="text-neutral-500 dark:text-neutral-400">Native dynamic QR generation with standard VPA interoperability, industry templates and automatic settlement reconciliation.</p>
                   </div>
                   <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                     <div className="font-bold text-neutral-900 dark:text-white mb-1">Global Exchange Registry</div>
-                    <p className="text-neutral-500 dark:text-neutral-400">Comprehensive real-time directory of companies listed across NYSE, NASDAQ, NSE, BSE, LSE, and Tokyo exchanges.</p>
+                    <p className="text-neutral-500 dark:text-neutral-400">Comprehensive real-time directory of companies listed across NYSE, NASDAQ, NSE, BSE, LSE and Tokyo exchanges.</p>
                   </div>
                   <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                     <div className="font-bold text-neutral-900 dark:text-white mb-1">Autonomous Intelligence</div>

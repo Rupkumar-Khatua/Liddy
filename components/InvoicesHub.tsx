@@ -19,7 +19,7 @@ interface InvoicesHubProps {
 type StatusFilter = 'ALL' | 'UNPAID' | 'PAID';
 
 export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
-  const { invoices, markInvoicePaid, deleteInvoice, formatAmount } = useFinMind();
+  const { invoices, markInvoicePaid, deleteInvoice, formatAmount, payoutConfig } = useFinMind();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedInvoice, setSelectedInvoice] = useState<{
@@ -63,10 +63,12 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
   const handleQuickPdfExport = async (inv: Invoice) => {
     let qr = '';
     try {
-      const activeUpi = inv.upiId?.trim() || 'merchant@upi';
-      const activePayee = inv.payeeName?.trim() || inv.senderName?.trim() || 'Billing Desk';
-      const uri = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activePayee)}&am=${(Number(inv.grandTotal) || 0).toFixed(2)}&tn=${encodeURIComponent(inv.invoiceNumber)}&cu=INR`;
-      qr = await QRCode.toDataURL(uri, { width: 160, margin: 1 });
+      const activeUpi = inv.upiId?.trim() || payoutConfig.upiId?.trim() || '';
+      if (activeUpi) {
+        const activePayee = inv.payeeName?.trim() || inv.senderName?.trim() || payoutConfig.payeeName || 'Billing Desk';
+        const uri = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activePayee)}&am=${(Number(inv.grandTotal) || 0).toFixed(2)}&tn=${encodeURIComponent(inv.invoiceNumber)}&cu=INR`;
+        qr = await QRCode.toDataURL(uri, { width: 160, margin: 1 });
+      }
     } catch {}
 
     const html = buildPrintableInvoiceHtml(
@@ -218,7 +220,7 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search invoice #, recipient, or notes..."
+            placeholder="Search invoice #, recipient or notes..."
             className="w-full md:w-72 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200/80 dark:border-neutral-700 rounded-xl px-3.5 py-2 text-xs text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
@@ -326,7 +328,7 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
             </h3>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
               {invoices.length === 0
-                ? 'Build itemized A4, Letter, or 80mm POS invoices with embedded UPI QR and one-click PDF or Gmail export.'
+                ? 'Build itemized A4, Letter or 80mm POS invoices with embedded UPI QR and one-click PDF or Gmail export.'
                 : 'Try clearing your filter or search query to inspect other bills.'}
             </p>
             <div className="pt-2">
@@ -354,8 +356,8 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
           onClose={() => setUpiTargetInvoice(null)}
           amount={Number(upiTargetInvoice.grandTotal) || 0}
           currency={upiTargetInvoice.currency || '₹'}
-          defaultUpiId={upiTargetInvoice.upiId || 'merchant@upi'}
-          defaultPayeeName={upiTargetInvoice.payeeName || upiTargetInvoice.senderName || 'Billing Desk'}
+          defaultUpiId={upiTargetInvoice.upiId || payoutConfig.upiId || ''}
+          defaultPayeeName={upiTargetInvoice.payeeName || upiTargetInvoice.senderName || payoutConfig.payeeName || 'Billing Desk'}
           invoiceNumber={upiTargetInvoice.invoiceNumber}
           onPaymentSuccess={(method, upiRef) => {
             markInvoicePaid(upiTargetInvoice.id, method, upiRef);

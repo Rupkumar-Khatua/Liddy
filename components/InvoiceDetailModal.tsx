@@ -33,7 +33,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   onClose,
   initialPreviewMode = false,
 }) => {
-  const { markInvoicePaid, deleteInvoice, updateInvoice } = useFinMind();
+  const { markInvoicePaid, deleteInvoice, updateInvoice, payoutConfig } = useFinMind();
   const [qrUrl, setQrUrl] = useState<string>('');
   const [copiedUri, setCopiedUri] = useState(false);
   const [isUpiOpen, setIsUpiOpen] = useState(false);
@@ -68,14 +68,18 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     setGmailConnected(hasGmailAccessToken());
     setGmailSender(getGmailTokenEmail() || '');
 
-    const activeUpi = invoice.upiId?.trim() || 'merchant@upi';
-    const activePayee = invoice.payeeName?.trim() || invoice.senderName?.trim() || 'Billing Desk';
+    const activeUpi = invoice.upiId?.trim() || payoutConfig.upiId?.trim() || '';
+    if (!activeUpi) {
+      setQrUrl('');
+      return;
+    }
+    const activePayee = invoice.payeeName?.trim() || invoice.senderName?.trim() || payoutConfig.payeeName || 'Billing Desk';
     const uri = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activePayee)}&am=${(Number(invoice.grandTotal) || 0).toFixed(2)}&tn=${encodeURIComponent(invoice.invoiceNumber)}&cu=INR`;
 
     QRCode.toDataURL(uri, { width: 180, margin: 1 })
       .then((url) => setQrUrl(url))
       .catch(() => setQrUrl(''));
-  }, [invoice, initialPreviewMode]);
+  }, [invoice, initialPreviewMode, payoutConfig.upiId, payoutConfig.payeeName]);
 
   useEffect(() => {
     if (!invoice) return;
@@ -100,7 +104,11 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     new Date(invoice.dueDate!).getTime() < new Date(new Date().toISOString().split('T')[0]).getTime();
 
   const cur = invoice.currency || '₹';
-  const upiLink = `upi://pay?pa=${encodeURIComponent(invoice.upiId?.trim() || 'merchant@upi')}&pn=${encodeURIComponent(invoice.payeeName?.trim() || invoice.senderName || 'Billing Desk')}&am=${(Number(invoice.grandTotal) || 0).toFixed(2)}&tn=${encodeURIComponent(invoice.invoiceNumber)}&cu=INR`;
+  const resolvedUpiId = invoice.upiId?.trim() || payoutConfig.upiId?.trim() || '';
+  const resolvedPayee = invoice.payeeName?.trim() || invoice.senderName?.trim() || payoutConfig.payeeName || 'Billing Desk';
+  const upiLink = resolvedUpiId
+    ? `upi://pay?pa=${encodeURIComponent(resolvedUpiId)}&pn=${encodeURIComponent(resolvedPayee)}&am=${(Number(invoice.grandTotal) || 0).toFixed(2)}&tn=${encodeURIComponent(invoice.invoiceNumber)}&cu=INR`
+    : '';
 
   const handleCopyUpiLink = () => {
     navigator.clipboard.writeText(upiLink).catch(() => {});
@@ -467,18 +475,20 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                 <div className="space-y-1.5 text-xs min-w-0">
                   <p className="font-bold text-neutral-900 dark:text-white">Payment Receiver Details</p>
                   <p className="font-mono text-[11px] text-neutral-600 dark:text-neutral-300 truncate">
-                    UPI ID: {invoice.upiId || 'merchant@upi'}
+                    UPI ID: {resolvedUpiId || 'Not configured in Settings'}
                   </p>
                   <p className="text-[11px] text-neutral-500 truncate">
-                    Payee: {invoice.payeeName || invoice.senderName || 'Billing Desk'}
+                    Payee: {resolvedPayee}
                   </p>
-                  <button
-                    type="button"
-                    onClick={handleCopyUpiLink}
-                    className="text-xs font-bold text-indigo-600 dark:text-sky-400 hover:underline cursor-pointer pt-0.5"
-                  >
-                    {copiedUri ? '✓ UPI Link Copied' : 'Copy UPI Payment Link'}
-                  </button>
+                  {upiLink && (
+                    <button
+                      type="button"
+                      onClick={handleCopyUpiLink}
+                      className="text-xs font-bold text-indigo-600 dark:text-sky-400 hover:underline cursor-pointer pt-0.5"
+                    >
+                      {copiedUri ? '✓ UPI Link Copied' : 'Copy UPI Payment Link'}
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -649,8 +659,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
           onClose={() => setIsUpiOpen(false)}
           amount={Number(invoice.grandTotal) || 0}
           currency={cur}
-          defaultUpiId={invoice.upiId || 'merchant@upi'}
-          defaultPayeeName={invoice.payeeName || invoice.senderName || 'Billing Desk'}
+          defaultUpiId={resolvedUpiId}
+          defaultPayeeName={resolvedPayee}
           invoiceNumber={invoice.invoiceNumber}
           onPaymentSuccess={(method, upiRef) => {
             markInvoicePaid(invoice.id, method, upiRef);

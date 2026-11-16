@@ -178,7 +178,7 @@ service cloud.firestore {
         && data.currency in ['INR', 'USD', 'EUR', 'GBP']
         && (data.amount is int || data.amount is float) && data.amount >= 0 && data.amount <= 10000000
         && (data.amountUsdEquivalent is int || data.amountUsdEquivalent is float) && data.amountUsdEquivalent >= 0 && data.amountUsdEquivalent <= 1000000
-        && data.paymentRail in ['UPI_QR', 'UPI_ID', 'CARD', 'WALLET']
+        && data.paymentRail in ['UPI_QR', 'UPI_ID', 'PAYPAL', 'CARD', 'WALLET']
         && data.connector is string && data.connector.size() >= 1 && data.connector.size() <= 80
         && data.status in ['succeeded', 'processing', 'requires_action', 'failed']
         && data.referenceCode is string && data.referenceCode.size() >= 1 && data.referenceCode.size() <= 120
@@ -205,6 +205,82 @@ service cloud.firestore {
         && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
         && data.role in ['owner', 'admin']
         && data.createdAt is timestamp;
+    }
+
+    function isValidPayoutSettings(data, userId) {
+      return data.keys().hasAll(['userId', 'upiId', 'payeeName', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'upiId', 'payeeName', 'bankName', 'accountHolder', 'accountNumber', 'ifscCode', 'updatedAt'])
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid
+        && data.upiId is string && data.upiId.size() >= 3 && data.upiId.size() <= 120
+        && data.payeeName is string && data.payeeName.size() >= 1 && data.payeeName.size() <= 120
+        && (!('bankName' in data) || (data.bankName is string && data.bankName.size() <= 120))
+        && (!('accountHolder' in data) || (data.accountHolder is string && data.accountHolder.size() <= 120))
+        && (!('accountNumber' in data) || (data.accountNumber is string && data.accountNumber.size() <= 40))
+        && (!('ifscCode' in data) || (data.ifscCode is string && data.ifscCode.size() <= 32))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPlatformPayoutPrivate(data) {
+      return data.keys().hasAll(['payeeName', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['upiId', 'payeeName', 'bankName', 'accountHolder', 'accountNumber', 'ifscCode', 'paypalEnabled', 'paypalEnvironment', 'paypalClientId', 'paypalClientSecret', 'paypalMerchantEmail', 'updatedBy', 'updatedAt'])
+        && (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 120))
+        && data.payeeName is string && data.payeeName.size() >= 1 && data.payeeName.size() <= 120
+        && (!('bankName' in data) || (data.bankName is string && data.bankName.size() <= 120))
+        && (!('accountHolder' in data) || (data.accountHolder is string && data.accountHolder.size() <= 120))
+        && (!('accountNumber' in data) || (data.accountNumber is string && data.accountNumber.size() <= 40))
+        && (!('ifscCode' in data) || (data.ifscCode is string && data.ifscCode.size() <= 32))
+        && (!('paypalEnabled' in data) || data.paypalEnabled is bool)
+        && (!('paypalEnvironment' in data) || data.paypalEnvironment in ['sandbox', 'live'])
+        && (!('paypalClientId' in data) || (data.paypalClientId is string && data.paypalClientId.size() <= 200))
+        && (!('paypalClientSecret' in data) || (data.paypalClientSecret is string && data.paypalClientSecret.size() <= 200))
+        && (!('paypalMerchantEmail' in data) || (data.paypalMerchantEmail is string && data.paypalMerchantEmail.size() <= 254))
+        && data.updatedBy is string && data.updatedBy == request.auth.uid
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPlatformPayoutPublic(data) {
+      return data.keys().hasAll(['payeeName', 'hasPayoutConfigured', 'updatedAt'])
+        && data.keys().hasOnly(['upiId', 'payeeName', 'bankName', 'accountNumberLast4', 'paypalEnabled', 'paypalEnvironment', 'paypalClientId', 'paypalMerchantEmail', 'hasPaypalConfigured', 'hasPayoutConfigured', 'updatedAt'])
+        && (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 120))
+        && data.payeeName is string && data.payeeName.size() >= 1 && data.payeeName.size() <= 120
+        && (!('bankName' in data) || (data.bankName is string && data.bankName.size() <= 120))
+        && (!('accountNumberLast4' in data) || (data.accountNumberLast4 is string && data.accountNumberLast4.size() <= 8))
+        && (!('paypalEnabled' in data) || data.paypalEnabled is bool)
+        && (!('paypalEnvironment' in data) || data.paypalEnvironment in ['sandbox', 'live'])
+        && (!('paypalClientId' in data) || (data.paypalClientId is string && data.paypalClientId.size() <= 200))
+        && (!('paypalMerchantEmail' in data) || (data.paypalMerchantEmail is string && data.paypalMerchantEmail.size() <= 254))
+        && (!('hasPaypalConfigured' in data) || data.hasPaypalConfigured is bool)
+        && data.hasPayoutConfigured is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPlatformAiImagePrivate(data) {
+      return data.keys().hasAll(['aiHordeEnabled', 'cloudflareEnabled', 'huggingfaceEnabled', 'queueTimeoutSec', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['aiHordeEnabled', 'aiHordeApiKey', 'cloudflareEnabled', 'cloudflareAccountId', 'cloudflareApiToken', 'huggingfaceEnabled', 'huggingfaceToken', 'queueTimeoutSec', 'updatedBy', 'updatedAt'])
+        && data.aiHordeEnabled is bool
+        && (!('aiHordeApiKey' in data) || (data.aiHordeApiKey is string && data.aiHordeApiKey.size() <= 120))
+        && data.cloudflareEnabled is bool
+        && (!('cloudflareAccountId' in data) || (data.cloudflareAccountId is string && data.cloudflareAccountId.size() <= 120))
+        && (!('cloudflareApiToken' in data) || (data.cloudflareApiToken is string && data.cloudflareApiToken.size() <= 250))
+        && data.huggingfaceEnabled is bool
+        && (!('huggingfaceToken' in data) || (data.huggingfaceToken is string && data.huggingfaceToken.size() <= 250))
+        && data.queueTimeoutSec is number && data.queueTimeoutSec >= 10 && data.queueTimeoutSec <= 120
+        && data.updatedBy is string && data.updatedBy == request.auth.uid
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPlatformAiImagePublic(data) {
+      return data.keys().hasAll(['aiHordeEnabled', 'cloudflareEnabled', 'huggingfaceEnabled', 'queueTimeoutSec', 'activeTurboMode', 'updatedAt'])
+        && data.keys().hasOnly(['aiHordeEnabled', 'hasAiHordeKey', 'cloudflareEnabled', 'hasCloudflareConfigured', 'huggingfaceEnabled', 'hasHuggingfaceConfigured', 'queueTimeoutSec', 'activeTurboMode', 'updatedAt'])
+        && data.aiHordeEnabled is bool
+        && (!('hasAiHordeKey' in data) || data.hasAiHordeKey is bool)
+        && data.cloudflareEnabled is bool
+        && (!('hasCloudflareConfigured' in data) || data.hasCloudflareConfigured is bool)
+        && data.huggingfaceEnabled is bool
+        && (!('hasHuggingfaceConfigured' in data) || data.hasHuggingfaceConfigured is bool)
+        && data.queueTimeoutSec is number && data.queueTimeoutSec >= 10 && data.queueTimeoutSec <= 120
+        && data.activeTurboMode is bool
+        && data.updatedAt is timestamp;
     }
 
     // 4. Owner-Scoped Collection Match Rules
@@ -292,6 +368,20 @@ service cloud.firestore {
           && incoming().diff(existing()).affectedKeys().hasOnly(['brokerName', 'totalValue', 'totalInvested', 'currency', 'notes', 'holdings', 'updatedAt']);
         allow delete: if isValidId(userId) && isValidId(portfolioId) && isOwner(userId);
       }
+
+      match /payout_settings/{settingId} {
+        allow get: if isValidId(userId) && isValidId(settingId) && isOwner(userId);
+        allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(settingId) && isOwner(userId)
+          && isValidPayoutSettings(incoming(), userId)
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId) && isValidId(settingId) && isOwner(userId)
+          && isValidPayoutSettings(incoming(), userId)
+          && incoming().userId == existing().userId
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['upiId', 'payeeName', 'bankName', 'accountHolder', 'accountNumber', 'ifscCode', 'updatedAt']);
+        allow delete: if isValidId(userId) && isValidId(settingId) && isOwner(userId);
+      }
     }
 
     // 5. Organization Workspaces (Admin Console + Owner Scoped)
@@ -357,7 +447,44 @@ service cloud.firestore {
       allow create: if isValidId(userId) && isAdmin()
         && isValidAdminUser(incoming(), userId)
         && incoming().createdAt == request.time;
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
+    }
+
+    // 10. Platform Payout Configuration (Admin-Only Private Banking + Signed-In Public UPI Routing)
+    match /platform_config/payout {
+      allow get, list: if isAdmin();
+      allow create, update: if isAdmin()
+        && isValidPlatformPayoutPrivate(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    match /platform_config/payout_public {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create, update: if isAdmin()
+        && isValidPlatformPayoutPublic(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    // 11. Platform Free AI Image Engine Configuration (Admin-Only Secrets + Signed-In Capability Flags)
+    match /platform_config/ai_image {
+      allow get, list: if isAdmin();
+      allow create, update: if isAdmin()
+        && isValidPlatformAiImagePrivate(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    match /platform_config/ai_image_public {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create, update: if isAdmin()
+        && isValidPlatformAiImagePublic(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
     }
   }
 }

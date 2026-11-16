@@ -482,7 +482,7 @@
         },
         "paymentRail": {
           "type": "string",
-          "enum": ["UPI_QR", "UPI_ID", "CARD", "NETBANKING", "WALLET"]
+          "enum": ["UPI_QR", "UPI_ID", "PAYPAL", "CARD", "WALLET"]
         },
         "connector": {
           "type": "string",
@@ -574,6 +574,242 @@
         }
       },
       "required": ["userId", "email", "role", "createdAt"]
+    },
+    "PlatformPayoutPrivate": {
+      "title": "PlatformPayoutPrivate",
+      "description": "Admin-only owner bank, UPI and PayPal settlement credentials for platform checkout",
+      "type": "object",
+      "properties": {
+        "upiId": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "payeeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "accountHolder": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "accountNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "ifscCode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "paypalEnabled": {
+          "type": "boolean"
+        },
+        "paypalEnvironment": {
+          "type": "string",
+          "enum": ["sandbox", "live"]
+        },
+        "paypalClientId": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "paypalClientSecret": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "paypalMerchantEmail": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["payeeName", "updatedBy", "updatedAt"]
+    },
+    "PlatformPayoutPublic": {
+      "title": "PlatformPayoutPublic",
+      "description": "Non-sensitive checkout routing metadata (UPI ID, payee name, bank name, last 4 digits and public PayPal Client ID)",
+      "type": "object",
+      "properties": {
+        "upiId": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "payeeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "accountNumberLast4": {
+          "type": "string",
+          "maxLength": 8
+        },
+        "paypalEnabled": {
+          "type": "boolean"
+        },
+        "paypalEnvironment": {
+          "type": "string",
+          "enum": ["sandbox", "live"]
+        },
+        "paypalClientId": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "paypalMerchantEmail": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "hasPaypalConfigured": {
+          "type": "boolean"
+        },
+        "hasPayoutConfigured": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["payeeName", "hasPayoutConfigured", "updatedAt"]
+    },
+    "PlatformAiImagePrivate": {
+      "title": "PlatformAiImagePrivate",
+      "description": "Admin-only free AI image generation keys for AI Horde, Cloudflare Workers AI and Hugging Face Inference",
+      "type": "object",
+      "properties": {
+        "aiHordeEnabled": {
+          "type": "boolean"
+        },
+        "aiHordeApiKey": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "cloudflareEnabled": {
+          "type": "boolean"
+        },
+        "cloudflareAccountId": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "cloudflareApiToken": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "huggingfaceEnabled": {
+          "type": "boolean"
+        },
+        "huggingfaceToken": {
+          "type": "string",
+          "maxLength": 250
+        },
+        "queueTimeoutSec": {
+          "type": "number"
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["aiHordeEnabled", "cloudflareEnabled", "huggingfaceEnabled", "queueTimeoutSec", "updatedBy", "updatedAt"]
+    },
+    "PlatformAiImagePublic": {
+      "title": "PlatformAiImagePublic",
+      "description": "Non-sensitive AI image engine capability flags for Vision Studio",
+      "type": "object",
+      "properties": {
+        "aiHordeEnabled": {
+          "type": "boolean"
+        },
+        "hasAiHordeKey": {
+          "type": "boolean"
+        },
+        "cloudflareEnabled": {
+          "type": "boolean"
+        },
+        "hasCloudflareConfigured": {
+          "type": "boolean"
+        },
+        "huggingfaceEnabled": {
+          "type": "boolean"
+        },
+        "hasHuggingfaceConfigured": {
+          "type": "boolean"
+        },
+        "queueTimeoutSec": {
+          "type": "number"
+        },
+        "activeTurboMode": {
+          "type": "boolean"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["aiHordeEnabled", "cloudflareEnabled", "huggingfaceEnabled", "queueTimeoutSec", "activeTurboMode", "updatedAt"]
+    },
+    "PayoutSettings": {
+      "title": "PayoutSettings",
+      "description": "Legacy user-scoped payout settings schema",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "upiId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120
+        },
+        "payeeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "bankName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "accountHolder": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "accountNumber": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "ifscCode": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "upiId", "payeeName", "updatedAt"]
     }
   },
   "firestore": {
@@ -600,6 +836,26 @@
     "/users/{userId}/portfolio/{portfolioId}": {
       "schema": "StockPortfolio",
       "description": "Owner-scoped stock broking balance and holdings"
+    },
+    "/users/{userId}/payout_settings/{settingId}": {
+      "schema": "PayoutSettings",
+      "description": "Owner-scoped receiving UPI and bank payout configuration"
+    },
+    "/platform_config/payout": {
+      "schema": "PlatformPayoutPrivate",
+      "description": "Admin-only platform receiving UPI and bank settlement credentials"
+    },
+    "/platform_config/payout_public": {
+      "schema": "PlatformPayoutPublic",
+      "description": "Publicly readable masked UPI settlement details for customer checkout QR codes"
+    },
+    "/platform_config/ai_image": {
+      "schema": "PlatformAiImagePrivate",
+      "description": "Admin-only free AI image generation keys for AI Horde, Cloudflare Workers AI and Hugging Face Inference"
+    },
+    "/platform_config/ai_image_public": {
+      "schema": "PlatformAiImagePublic",
+      "description": "Publicly readable AI image engine availability flags"
     },
     "/organizations/{orgId}": {
       "schema": "Organization",

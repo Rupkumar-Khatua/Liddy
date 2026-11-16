@@ -52,10 +52,10 @@ const GREETING_SETS: Record<'morning' | 'afternoon' | 'evening' | 'night', strin
 };
 
 const SUBTITLE_OPTIONS = [
-  'See where your money goes, track your connected stock broker balance, and keep bills settled.',
-  'Everyday expenses, manual broking portfolio tracking, and clean client invoicing in one place.',
-  'Your daily personal cashflow, stock holdings summary, and invoice settlements at a glance.',
-  'Clear numbers without clutter: daily spending categories, broker balances, and pending bills.',
+  'See where your money goes, track your connected stock broker balance and keep bills settled.',
+  'Everyday expenses, manual broking portfolio tracking and clean client invoicing in one place.',
+  'Your daily personal cashflow, stock holdings summary and invoice settlements at a glance.',
+  'Clear numbers without clutter: daily spending categories, broker balances and pending bills.',
 ];
 
 interface DashboardProps {
@@ -73,6 +73,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
     stockPortfolio,
     updateStockPortfolio,
     currencyPlacement,
+    payoutConfig,
   } = useFinMind();
 
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly'>('daily');
@@ -732,7 +733,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
                   No Categories Tracked Yet
                 </div>
                 <p className="text-xs text-neutral-400 leading-relaxed">
-                  Groceries, dining, utilities, subscriptions, and travel group automatically after your first scan.
+                  Groceries, dining, utilities, subscriptions and travel group automatically after your first scan.
                 </p>
               </div>
             )}
@@ -996,8 +997,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
           onClose={() => setSettlingInvoice(null)}
           amount={Number(settlingInvoice.grandTotal) || 0}
           currency={settlingInvoice.currency || '₹'}
-          defaultUpiId={settlingInvoice.upiId || 'merchant@upi'}
-          defaultPayeeName={settlingInvoice.payeeName || settlingInvoice.senderName || 'Billing Desk'}
+          defaultUpiId={settlingInvoice.upiId || payoutConfig.upiId || ''}
+          defaultPayeeName={settlingInvoice.payeeName || settlingInvoice.senderName || payoutConfig.payeeName || 'Billing Desk'}
           invoiceNumber={settlingInvoice.invoiceNumber}
           onPaymentSuccess={(method, upiRef) => {
             markInvoicePaid(settlingInvoice.id, method, upiRef);

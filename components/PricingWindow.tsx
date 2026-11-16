@@ -10,9 +10,17 @@ import { HyperswitchCheckoutModal } from './HyperswitchCheckoutModal';
 
 interface PricingWindowProps {
   onNavigateWindow?: (windowId: WindowId) => void;
+  isModal?: boolean;
+  modalReason?: string;
+  onCloseModal?: () => void;
 }
 
-export const PricingWindow: React.FC<PricingWindowProps> = ({ onNavigateWindow }) => {
+export const PricingWindow: React.FC<PricingWindowProps> = ({
+  onNavigateWindow,
+  isModal = false,
+  modalReason,
+  onCloseModal,
+}) => {
   const { planTier, upgradePlan, currentUser, openAuthModal } = useFinMind();
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('annual');
   const [checkoutTier, setCheckoutTier] = useState<'pro' | 'team' | null>(null);
@@ -30,6 +38,10 @@ export const PricingWindow: React.FC<PricingWindowProps> = ({ onNavigateWindow }
   const handleSelectPlan = async (tier: PlanTier) => {
     setUpgradeNotice(null);
     if (tier === 'free') {
+      if (isModal && onCloseModal) {
+        onCloseModal();
+        return;
+      }
       setUpdatingFree(true);
       try {
         await upgradePlan('free');
@@ -46,23 +58,38 @@ export const PricingWindow: React.FC<PricingWindowProps> = ({ onNavigateWindow }
     setUpgradeNotice(
       `${PLAN_CATALOG[payment.planTier].name} activated cleanly (${payment.region} · ${payment.paymentRail.replace('_', ' ')}).`
     );
+    if (isModal && onCloseModal) {
+      window.setTimeout(() => onCloseModal(), 1200);
+    }
   };
 
   const tiers: PlanTier[] = ['free', 'pro', 'team'];
 
   return (
-    <div className="space-y-10 animate-enter">
+    <div className="space-y-8 sm:space-y-10 animate-enter">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
         <div className="max-w-2xl space-y-2">
-          <p className="text-xs font-mono uppercase tracking-[0.18em] text-indigo-600 dark:text-indigo-400 font-semibold">
-            Transparent Global &amp; India Pricing
-          </p>
-          <h1 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-neutral-900 dark:text-white">
-            Start free. Upgrade seamlessly with UPI, cards, or digital wallets.
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs font-mono uppercase tracking-[0.18em] text-indigo-600 dark:text-indigo-400 font-semibold">
+              {isModal ? 'Upgrade Your Workspace' : 'Transparent Global & India Pricing'}
+            </p>
+            {isModal && onCloseModal && (
+              <button
+                type="button"
+                onClick={onCloseModal}
+                aria-label="Close upgrade window"
+                className="md:hidden w-8 h-8 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 flex items-center justify-center text-sm font-bold cursor-pointer"
+              >
+                &times;
+              </button>
+            )}
+          </div>
+          <h1 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-neutral-900 dark:text-white">
+            Start free. Upgrade seamlessly with India UPI or International PayPal.
           </h1>
           <p className="text-sm sm:text-base text-neutral-600 dark:text-neutral-300">
-            Verified multi-currency billing with instant email invoices. Zero hidden fee on your client bills.
+            {modalReason || 'Verified multi-currency billing with instant email invoices. Zero hidden fee on your client bills.'}
           </p>
         </div>
 
@@ -208,7 +235,7 @@ export const PricingWindow: React.FC<PricingWindowProps> = ({ onNavigateWindow }
               <div className="pt-8">
                 <button
                   type="button"
-                  disabled={updatingFree || isCurrent}
+                  disabled={updatingFree || (isCurrent && !(isModal && tierId === 'free'))}
                   onClick={() => handleSelectPlan(tierId)}
                   className={`w-full py-3 px-4 rounded-2xl text-sm font-bold transition-all cursor-pointer disabled:opacity-60 ${
                     isFeatured
@@ -216,7 +243,9 @@ export const PricingWindow: React.FC<PricingWindowProps> = ({ onNavigateWindow }
                       : 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 hover:opacity-90'
                   }`}
                 >
-                  {isCurrent
+                  {isModal && tierId === 'free'
+                    ? 'Continue Free for Now'
+                    : isCurrent
                     ? 'Current Plan'
                     : tierId === 'free'
                     ? updatingFree
@@ -237,7 +266,7 @@ export const PricingWindow: React.FC<PricingWindowProps> = ({ onNavigateWindow }
             Flexible Regional &amp; Global Payments
           </p>
           <p className="text-sm font-semibold text-neutral-900 dark:text-white">
-            India: UPI QR, UPI ID &amp; RuPay Cards &middot; International: Visa, Mastercard, Amex &amp; Express Wallets
+            India: UPI QR &amp; UPI ID &middot; International: PayPal
           </p>
         </div>
         {(!currentUser || currentUser.isGuest) && (

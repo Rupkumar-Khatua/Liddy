@@ -10,6 +10,9 @@ import {
   HyperswitchPaymentRecord,
   IdeationBoardRecord,
   StockPortfolioState,
+  MerchantPayoutConfig,
+  AiImageConfig,
+  AgentLedgerOperations,
 } from '../types';
 import { auth, db, logout, OperationType, handleFirestoreError } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -54,10 +57,17 @@ interface FinMindContextType extends AppState {
   closeAuthModal: () => void;
   loginUser: (user: LiddyUser) => void;
   logoutUser: () => Promise<void>;
-  trackEngagement: (featureName?: string) => void;
+  trackEngagement: (featureName?: string) => boolean;
   isGuestTrialExpired: () => boolean;
+  isGuestLocked: boolean;
   remainingGuestMinutes: number;
+  remainingGuestActions: number;
   engagementCount: number;
+  freeTierActionCount: number;
+  isUpgradeModalOpen: boolean;
+  upgradeModalReason: string;
+  openUpgradeModal: (reason?: string) => void;
+  closeUpgradeModal: () => void;
 
   // Monetization, Payments & Entitlements
   planTier: PlanTier;
@@ -79,6 +89,7 @@ interface FinMindContextType extends AppState {
     board: IdeationBoardRecord
   ) => Promise<{ ok: boolean; syncedToCloud: boolean; error?: string }>;
   loadIdeationBoards: () => Promise<IdeationBoardRecord[]>;
+  deleteIdeationBoard: (boardId: string) => Promise<void>;
 
   // Admin Organization, Users & Payments Operations
   organizations: OrganizationRecord[];
@@ -88,11 +99,24 @@ interface FinMindContextType extends AppState {
   refreshOrganizations: () => Promise<void>;
   fetchAdminUsers: () => Promise<Array<{ userId: string; displayName: string; email?: string; createdAt?: string; updatedAt?: string }>>;
   fetchAdminPayments: () => Promise<HyperswitchPaymentRecord[]>;
+  getAdminAuthHeaders: () => Promise<Record<string, string>>;
+  fetchAdminIdeationBoards: () => Promise<IdeationBoardRecord[]>;
+  deleteAdminIdeationBoard: (boardId: string) => Promise<void>;
+  fetchAdminAllowlist: () => Promise<Array<{ userId: string; email: string; role: 'owner' | 'admin'; createdAt?: string }>>;
+  addAdminAllowlistEntry: (userId: string, email: string, role?: 'admin' | 'owner') => Promise<void>;
+  removeAdminAllowlistEntry: (userId: string) => Promise<void>;
+  reportClientFailure: (subsystem: string, source: string, message: string) => void;
 
   // Transactions & Invoices Operations
   addTransaction: (t: Omit<Transaction, 'id' | 'status'> & { status?: 'completed' | 'pending' }) => void;
   updateTransaction: (id: string, updates: Partial<Transaction>) => void;
   deleteTransaction: (id: string) => void;
+  applyAgentLedgerOperations: (ops: AgentLedgerOperations) => {
+    added: number;
+    updated: number;
+    deleted: number;
+    settledInvoices: number;
+  };
   clearAllTransactions: () => void;
   resetAllData: () => void;
   clearAllData: () => void;
@@ -115,6 +139,14 @@ interface FinMindContextType extends AppState {
   // Connected Stock Broking Portfolio
   stockPortfolio: StockPortfolioState;
   updateStockPortfolio: (next: StockPortfolioState) => Promise<void>;
+
+  // Owner Payout & Banking Receiving Details
+  payoutConfig: MerchantPayoutConfig;
+  updatePayoutConfig: (next: MerchantPayoutConfig) => Promise<{ ok: boolean; error?: string }>;
+
+  // Free AI Image Engine Configuration (Admin Exclusive Secrets + Public Capability Flags)
+  aiImageConfig: AiImageConfig;
+  updateAiImageConfig: (next: AiImageConfig) => Promise<{ ok: boolean; error?: string }>;
 
   // Currency & Formatting
   currencySymbol: string;
@@ -236,6 +268,8 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalReason, setAuthModalReason] = useState('Liddy Workspace');
+  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+  const [upgradeModalReason, setUpgradeModalReason] = useState('');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Plan & Monetization Preferences
@@ -352,6 +386,61 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       holdings: [],
       updatedAt: new Date().toISOString(),
     };
+  });
+
+  const [payoutConfig, setPayoutConfig] = useState<MerchantPayoutConfig>(() => {
+    try {
+      const saved = localStorage.getItem('liddy_payout_public_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            upiId: String(parsed.upiId || ''),
+            payeeName: String(parsed.payeeName || ''),
+            bankName: String(parsed.bankName || ''),
+            accountHolder: '',
+            accountNumber: '',
+            ifscCode: '',
+            paypalEnabled: Boolean(parsed.paypalEnabled),
+            paypalEnvironment: parsed.paypalEnvironment === 'live' ? 'live' : 'sandbox',
+            paypalClientId: String(parsed.paypalClientId || ''),
+            paypalClientSecret: '',
+            paypalMerchantEmail: String(parsed.paypalMerchantEmail || ''),
+            hasPaypalConfigured: Boolean(parsed.hasPaypalConfigured),
+            updatedAt: parsed.updatedAt,
+          };
+        }
+      }
+    } catch {}
+    return {
+      upiId: '',
+      payeeName: '',
+      bankName: '',
+      accountHolder: '',
+      accountNumber: '',
+      ifscCode: '',
+      paypalEnabled: false,
+      paypalEnvironment: 'sandbox',
+      paypalClientId: '',
+      paypalClientSecret: '',
+      paypalMerchantEmail: '',
+      hasPaypalConfigured: false,
+    };
+  });
+
+  const [aiImageConfig, setAiImageConfig] = useState<AiImageConfig>({
+    aiHordeEnabled: true,
+    aiHordeApiKey: '',
+    hasAiHordeKey: false,
+    cloudflareEnabled: false,
+    cloudflareAccountId: '',
+    cloudflareApiToken: '',
+    hasCloudflareConfigured: false,
+    huggingfaceEnabled: false,
+    huggingfaceToken: '',
+    hasHuggingfaceConfigured: false,
+    queueTimeoutSec: 45,
+    activeTurboMode: false,
   });
 
   const isAdminUser = Boolean(
@@ -692,6 +781,25 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [firebaseUid]);
 
+  const deleteIdeationBoard = useCallback(async (boardId: string) => {
+    const safeId = sanitizeDocId(boardId);
+    try {
+      const savedRaw = localStorage.getItem('liddy_ideation_boards');
+      if (savedRaw) {
+        const list: IdeationBoardRecord[] = JSON.parse(savedRaw);
+        localStorage.setItem(
+          'liddy_ideation_boards',
+          JSON.stringify(list.filter((b) => b.boardId !== boardId && sanitizeDocId(b.boardId) !== safeId))
+        );
+      }
+    } catch {}
+    if (firebaseUid) {
+      try {
+        await deleteDoc(doc(db, 'ideation_boards', safeId));
+      } catch {}
+    }
+  }, [firebaseUid]);
+
   const fetchAdminUsers = useCallback(async () => {
     if (!firebaseUid || !isAdminUser) return [];
     try {
@@ -741,7 +849,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
             currency: data.currency || 'USD',
             amount: Number(data.amount) || 0,
             amountUsdEquivalent: Number(data.amountUsdEquivalent) || 0,
-            paymentRail: data.paymentRail || 'CARD',
+            paymentRail: data.paymentRail || 'PAYPAL',
             connector: data.connector || 'hyperswitch',
             status: data.status || 'succeeded',
             referenceCode: data.referenceCode || d.id,
@@ -753,6 +861,82 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     return Array.from(byId.values()).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   }, [payments, firebaseUid, isAdminUser]);
+
+  const getAdminAuthHeaders = useCallback(async (): Promise<Record<string, string>> => {
+    const token = await auth.currentUser?.getIdToken().catch(() => '');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
+
+  const reportClientFailure = useCallback((subsystem: string, source: string, message: string) => {
+    fetch('/api/ops/report-error', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ subsystem, source, message, severity: 'error' }),
+    }).catch(() => {});
+  }, []);
+
+  const fetchAdminIdeationBoards = useCallback(async (): Promise<IdeationBoardRecord[]> => {
+    if (!firebaseUid || !isAdminUser) return [];
+    try {
+      const snap = await getDocs(query(collection(db, 'ideation_boards'), orderBy('updatedAt', 'desc'), limit(100)));
+      return snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          boardId: data.boardId || d.id,
+          title: data.title || 'Vision Board',
+          roomCode: data.roomCode || 'ROOM-101',
+          ownerUserId: data.ownerUserId || '',
+          nodes: Array.isArray(data.nodes) ? data.nodes : [],
+          slides: Array.isArray(data.slides) ? data.slides : [],
+          meetingNotes: Array.isArray(data.meetingNotes) ? data.meetingNotes : [],
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : new Date().toISOString(),
+        };
+      });
+    } catch {
+      return [];
+    }
+  }, [firebaseUid, isAdminUser]);
+
+  const deleteAdminIdeationBoard = useCallback(async (boardId: string) => {
+    if (!firebaseUid || !isAdminUser) return;
+    const safeId = sanitizeDocId(boardId);
+    await deleteDoc(doc(db, 'ideation_boards', safeId));
+  }, [firebaseUid, isAdminUser]);
+
+  const fetchAdminAllowlist = useCallback(async () => {
+    if (!firebaseUid || !isAdminUser) return [];
+    try {
+      const snap = await getDocs(collection(db, 'admins'));
+      return snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          userId: data.userId || d.id,
+          email: String(data.email || ''),
+          role: (data.role === 'owner' ? 'owner' : 'admin') as 'owner' | 'admin',
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : undefined,
+        };
+      });
+    } catch {
+      return [];
+    }
+  }, [firebaseUid, isAdminUser]);
+
+  const addAdminAllowlistEntry = useCallback(async (userId: string, email: string, role: 'admin' | 'owner' = 'admin') => {
+    if (!firebaseUid || !isAdminUser) return;
+    const safeId = sanitizeDocId(userId);
+    await setDoc(doc(db, 'admins', safeId), {
+      userId: safeId,
+      email: email.trim().slice(0, 254),
+      role,
+      createdAt: serverTimestamp(),
+    });
+  }, [firebaseUid, isAdminUser]);
+
+  const removeAdminAllowlistEntry = useCallback(async (userId: string) => {
+    if (!firebaseUid || !isAdminUser || userId === firebaseUid) return;
+    const safeId = sanitizeDocId(userId);
+    await deleteDoc(doc(db, 'admins', safeId));
+  }, [firebaseUid, isAdminUser]);
 
   const refreshOrganizations = useCallback(async () => {
     try {
@@ -1279,6 +1463,54 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     );
 
+    const unsubPublicPayout = onSnapshot(
+      doc(db, 'platform_config', 'payout_public'),
+      (snap) => {
+        if (isCancelled || !snap.exists()) return;
+        const d = snap.data();
+        const syncedPublic = {
+          upiId: String(d.upiId || ''),
+          payeeName: String(d.payeeName || ''),
+          bankName: String(d.bankName || ''),
+          paypalEnabled: Boolean(d.paypalEnabled),
+          paypalEnvironment: (d.paypalEnvironment === 'live' ? 'live' : 'sandbox') as 'sandbox' | 'live',
+          paypalClientId: String(d.paypalClientId || ''),
+          paypalMerchantEmail: String(d.paypalMerchantEmail || ''),
+          hasPaypalConfigured: Boolean(d.hasPaypalConfigured ?? Boolean(d.paypalClientId)),
+          updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : new Date().toISOString(),
+        };
+        setPayoutConfig((prev) => ({
+          ...prev,
+          ...syncedPublic,
+        }));
+        try {
+          localStorage.setItem('liddy_payout_public_config', JSON.stringify(syncedPublic));
+        } catch {}
+      },
+      () => {}
+    );
+
+    const unsubPublicAiImage = onSnapshot(
+      doc(db, 'platform_config', 'ai_image_public'),
+      (snap) => {
+        if (isCancelled || !snap.exists()) return;
+        const d = snap.data();
+        setAiImageConfig((prev) => ({
+          ...prev,
+          aiHordeEnabled: d.aiHordeEnabled !== false,
+          hasAiHordeKey: Boolean(d.hasAiHordeKey),
+          cloudflareEnabled: Boolean(d.cloudflareEnabled),
+          hasCloudflareConfigured: Boolean(d.hasCloudflareConfigured),
+          huggingfaceEnabled: Boolean(d.huggingfaceEnabled),
+          hasHuggingfaceConfigured: Boolean(d.hasHuggingfaceConfigured),
+          queueTimeoutSec: Number(d.queueTimeoutSec) || 45,
+          activeTurboMode: Boolean(d.activeTurboMode),
+          updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : prev.updatedAt,
+        }));
+      },
+      () => {}
+    );
+
     return () => {
       isCancelled = true;
       unsubPrefs();
@@ -1286,8 +1518,151 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       unsubInv();
       unsubGoals();
       unsubPortfolio();
+      unsubPublicPayout();
+      unsubPublicAiImage();
     };
   }, [firebaseUid, syncPreferencesToCloud]);
+
+  // Admin-only full bank, UPI and PayPal config sync (/platform_config/payout + /api/admin/payout-config)
+  useEffect(() => {
+    if (!firebaseUid || !isAdminUser) {
+      fetch('/api/payments/payout-config/public')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data && (data.upiId || data.payeeName || data.paypalClientId)) {
+            setPayoutConfig((prev) => ({
+              ...prev,
+              upiId: String(data.upiId || ''),
+              payeeName: String(data.payeeName || ''),
+              bankName: String(data.bankName || ''),
+              paypalEnabled: Boolean(data.paypalEnabled),
+              paypalEnvironment: data.paypalEnvironment === 'live' ? 'live' : 'sandbox',
+              paypalClientId: String(data.paypalClientId || ''),
+              paypalMerchantEmail: String(data.paypalMerchantEmail || ''),
+              hasPaypalConfigured: Boolean(data.hasPaypalConfigured),
+              updatedAt: data.updatedAt,
+            }));
+          }
+        })
+        .catch(() => {});
+      fetch('/api/ai/image-config/public')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (data && typeof data === 'object') {
+            setAiImageConfig((prev) => ({
+              ...prev,
+              ...data,
+            }));
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+
+    let cancelled = false;
+    const unsubAdminPayout = onSnapshot(
+      doc(db, 'platform_config', 'payout'),
+      async (snap) => {
+        if (cancelled || !snap.exists()) return;
+        const d = snap.data();
+        const full: MerchantPayoutConfig = {
+          upiId: String(d.upiId || ''),
+          payeeName: String(d.payeeName || ''),
+          bankName: String(d.bankName || ''),
+          accountHolder: String(d.accountHolder || ''),
+          accountNumber: String(d.accountNumber || ''),
+          ifscCode: String(d.ifscCode || ''),
+          paypalEnabled: Boolean(d.paypalEnabled ?? Boolean(d.paypalClientId)),
+          paypalEnvironment: d.paypalEnvironment === 'live' ? 'live' : 'sandbox',
+          paypalClientId: String(d.paypalClientId || ''),
+          paypalClientSecret: String(d.paypalClientSecret || ''),
+          paypalMerchantEmail: String(d.paypalMerchantEmail || ''),
+          hasPaypalConfigured: Boolean(d.paypalClientId && d.paypalClientSecret),
+          updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : new Date().toISOString(),
+        };
+        setPayoutConfig(full);
+        if (full.upiId || full.accountNumber || full.paypalClientId) {
+          const headers = await getAdminAuthHeaders();
+          fetch('/api/admin/payout-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headers },
+            body: JSON.stringify(full),
+          }).catch(() => {});
+        }
+      },
+      () => {}
+    );
+
+    getAdminAuthHeaders()
+      .then((headers) => fetch('/api/admin/payout-config', { headers }))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const cfg = data?.payoutConfig;
+        if (cfg && (cfg.upiId || cfg.accountNumber || cfg.paypalClientId)) {
+          setPayoutConfig((prev) => {
+            if ((prev.upiId || prev.accountNumber || prev.paypalClientId) && prev.updatedAt && cfg.updatedAt && prev.updatedAt > cfg.updatedAt) {
+              return prev;
+            }
+            return cfg;
+          });
+        }
+      })
+      .catch(() => {});
+
+    const unsubAdminAiImage = onSnapshot(
+      doc(db, 'platform_config', 'ai_image'),
+      async (snap) => {
+        if (cancelled || !snap.exists()) return;
+        const d = snap.data();
+        const full: AiImageConfig = {
+          aiHordeEnabled: d.aiHordeEnabled !== false,
+          aiHordeApiKey: String(d.aiHordeApiKey || ''),
+          hasAiHordeKey: Boolean(d.aiHordeApiKey),
+          cloudflareEnabled: Boolean(d.cloudflareEnabled),
+          cloudflareAccountId: String(d.cloudflareAccountId || ''),
+          cloudflareApiToken: String(d.cloudflareApiToken || ''),
+          hasCloudflareConfigured: Boolean(d.cloudflareAccountId && d.cloudflareApiToken),
+          huggingfaceEnabled: Boolean(d.huggingfaceEnabled),
+          huggingfaceToken: String(d.huggingfaceToken || ''),
+          hasHuggingfaceConfigured: Boolean(d.huggingfaceToken),
+          queueTimeoutSec: Number(d.queueTimeoutSec) || 45,
+          activeTurboMode: Boolean(
+            (d.cloudflareEnabled && d.cloudflareAccountId && d.cloudflareApiToken) ||
+              (d.huggingfaceEnabled && d.huggingfaceToken)
+          ),
+          updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : new Date().toISOString(),
+        };
+        setAiImageConfig(full);
+        const headers = await getAdminAuthHeaders();
+        fetch('/api/admin/ai-image-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify(full),
+        }).catch(() => {});
+      },
+      () => {}
+    );
+
+    getAdminAuthHeaders()
+      .then((headers) => fetch('/api/admin/ai-image-config', { headers }))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data?.aiImageConfig) return;
+        const cfg = data.aiImageConfig as AiImageConfig;
+        setAiImageConfig((prev) => {
+          if (prev.updatedAt && cfg.updatedAt && prev.updatedAt > cfg.updatedAt) return prev;
+          return cfg;
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      unsubAdminPayout();
+      unsubAdminAiImage();
+    };
+  }, [firebaseUid, isAdminUser, getAdminAuthHeaders]);
 
   useEffect(() => {
     const handleAuthSync = (e: any) => {
@@ -1315,6 +1690,8 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   });
 
+  const [freeTierActionCount, setFreeTierActionCount] = useState<number>(0);
+
   const unlockScrollSafely = () => {
     document.body.style.overflow = '';
     document.documentElement.style.overflow = '';
@@ -1335,6 +1712,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setFirebaseUid(null);
     setCurrentUser(null);
     setIsAdminDocVerified(false);
+    setIsUpgradeModalOpen(false);
     localStorage.removeItem('liddy_user_session');
     unlockScrollSafely();
     window.dispatchEvent(new CustomEvent('liddy_auth_change', { detail: null }));
@@ -1350,6 +1728,36 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     unlockScrollSafely();
   }, []);
 
+  const openUpgradeModal = useCallback((reason?: string) => {
+    if (reason) setUpgradeModalReason(reason);
+    setIsUpgradeModalOpen(true);
+  }, []);
+
+  const closeUpgradeModal = useCallback(() => {
+    setIsUpgradeModalOpen(false);
+    unlockScrollSafely();
+  }, []);
+
+  useEffect(() => {
+    if (planTier !== 'free' || isAdminUser) {
+      setIsUpgradeModalOpen(false);
+    }
+  }, [planTier, isAdminUser]);
+
+  useEffect(() => {
+    if (!currentUser || currentUser.isGuest) {
+      setFreeTierActionCount(0);
+      return;
+    }
+    const userKey = sanitizeDocId(currentUser.uid || currentUser.email || 'member');
+    try {
+      const stored = parseInt(localStorage.getItem(`liddy_free_actions_${userKey}`) || '0', 10);
+      setFreeTierActionCount(!isNaN(stored) && stored > 0 ? stored : 0);
+    } catch {
+      setFreeTierActionCount(0);
+    }
+  }, [currentUser]);
+
   const openSettings = useCallback(() => setIsSettingsOpen(true), []);
   const closeSettings = useCallback(() => {
     setIsSettingsOpen(false);
@@ -1357,6 +1765,8 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   const GUEST_TRIAL_DURATION_MS = 30 * 60 * 1000;
+  const GUEST_ACTION_LIMIT = 5;
+  const FREE_PAYMENT_PROMPT_THRESHOLD = 12;
 
   const getGuestSessionStart = useCallback((): number => {
     try {
@@ -1373,46 +1783,94 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, []);
 
+  const isGuestSession = !currentUser || Boolean(currentUser.isGuest);
+
   const isGuestTrialExpired = useCallback((): boolean => {
     if (currentUser && !currentUser.isGuest) return false;
     const start = getGuestSessionStart();
-    return Date.now() - start > GUEST_TRIAL_DURATION_MS;
+    return Date.now() - start >= GUEST_TRIAL_DURATION_MS;
   }, [currentUser, getGuestSessionStart]);
 
   const [remainingGuestMinutes, setRemainingGuestMinutes] = useState<number>(30);
+  const [guestTimeExpired, setGuestTimeExpired] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem('liddy_guest_session_start');
+      if (!stored) return false;
+      const parsed = parseInt(stored, 10);
+      return !isNaN(parsed) && Date.now() - parsed >= GUEST_TRIAL_DURATION_MS;
+    } catch {
+      return false;
+    }
+  });
 
   useEffect(() => {
     const updateRemaining = () => {
       if (currentUser && !currentUser.isGuest) {
         setRemainingGuestMinutes(30);
+        setGuestTimeExpired(false);
         return;
       }
       const start = getGuestSessionStart();
       const elapsed = Date.now() - start;
       const remaining = Math.max(0, Math.ceil((GUEST_TRIAL_DURATION_MS - elapsed) / (60 * 1000)));
+      const expired = elapsed >= GUEST_TRIAL_DURATION_MS;
       setRemainingGuestMinutes(remaining);
+      setGuestTimeExpired(expired);
     };
 
     updateRemaining();
-    const interval = setInterval(updateRemaining, 30000);
+    const interval = setInterval(updateRemaining, 15000);
     return () => clearInterval(interval);
   }, [currentUser, getGuestSessionStart]);
 
-  const trackEngagement = useCallback((featureName?: string) => {
-    if (!currentUser || currentUser.isGuest) {
-      setEngagementCount((prev) => {
-        const next = prev + 1;
-        try {
-          localStorage.setItem('liddy_engagement_count', next.toString());
-        } catch {}
+  const isGuestLocked = isGuestSession && (engagementCount > GUEST_ACTION_LIMIT || guestTimeExpired);
+  const remainingGuestActions = isGuestSession ? Math.max(0, GUEST_ACTION_LIMIT - engagementCount) : GUEST_ACTION_LIMIT;
 
-        if (next > 5 || isGuestTrialExpired()) {
-          openAuthModal(featureName ? `Liddy Workspace: ${featureName}` : 'Unlock Cloud Sync');
-        }
-        return next;
-      });
+  const trackEngagement = useCallback((featureName?: string): boolean => {
+    if (!currentUser || currentUser.isGuest) {
+      const expiredNow = isGuestTrialExpired();
+      let nextCount = engagementCount + 1;
+      try {
+        const stored = parseInt(localStorage.getItem('liddy_engagement_count') || String(engagementCount), 10);
+        if (!isNaN(stored)) nextCount = Math.max(nextCount, stored + 1);
+        localStorage.setItem('liddy_engagement_count', nextCount.toString());
+      } catch {}
+      setEngagementCount(nextCount);
+
+      if (expiredNow) {
+        setGuestTimeExpired(true);
+      }
+
+      if (nextCount > GUEST_ACTION_LIMIT || expiredNow) {
+        openAuthModal(
+          expiredNow
+            ? 'Your 30-minute guest preview ended — Create a free account to continue'
+            : featureName
+            ? `Free 5-action guest preview used — Sign up to continue with ${featureName}`
+            : 'Free guest allowance used — Create a free account to continue'
+        );
+        return false;
+      }
+    } else if (planTier === 'free' && !isAdminUser) {
+      const userKey = sanitizeDocId(currentUser.uid || currentUser.email || 'member');
+      let nextFreeCount = freeTierActionCount + 1;
+      try {
+        const stored = parseInt(localStorage.getItem(`liddy_free_actions_${userKey}`) || String(freeTierActionCount), 10);
+        if (!isNaN(stored)) nextFreeCount = Math.max(nextFreeCount, stored + 1);
+        localStorage.setItem(`liddy_free_actions_${userKey}`, nextFreeCount.toString());
+      } catch {}
+      setFreeTierActionCount(nextFreeCount);
+
+      if (nextFreeCount >= FREE_PAYMENT_PROMPT_THRESHOLD && nextFreeCount % FREE_PAYMENT_PROMPT_THRESHOLD === 0) {
+        openUpgradeModal(
+          featureName
+            ? `You've completed ${nextFreeCount} workspace actions — Unlock unlimited Pro & Team features for ${featureName}`
+            : `You've completed ${nextFreeCount} workspace actions on Starter Free — Upgrade anytime to unlock full limits`
+        );
+      }
     }
-  }, [currentUser, isGuestTrialExpired, openAuthModal]);
+    return true;
+  }, [currentUser, engagementCount, freeTierActionCount, planTier, isAdminUser, isGuestTrialExpired, openAuthModal, openUpgradeModal]);
 
   const user = {
     name: currentUser?.displayName || 'Member',
@@ -1457,6 +1915,9 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     if (t.paymentMethod === 'SCAN_RECEIPT') {
       logAnalyticsEvent('ocr_scan', 'scanner', t.merchant, t.amount);
+      trackEngagement('Receipt & Expense Scanner');
+    } else {
+      trackEngagement('Expense Ledger');
     }
 
     if (firebaseUid) {
@@ -1509,6 +1970,84 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
         });
     }
   };
+
+  const applyAgentLedgerOperations = useCallback(
+    (ops: AgentLedgerOperations) => {
+      const adds = Array.isArray(ops?.addTransactions) ? ops.addTransactions : [];
+      const updates = Array.isArray(ops?.updateTransactions) ? ops.updateTransactions : [];
+      const deletes = Array.isArray(ops?.deleteTransactionIds) ? ops.deleteTransactionIds : [];
+      const settleInvoices = Array.isArray(ops?.markInvoicesPaid) ? ops.markInvoicesPaid : [];
+
+      const deleteSet = new Set(deletes);
+      const updateMap = new Map(updates.map((u) => [u.id, u.updates]));
+      const newlyAddedTx: Transaction[] = adds.map((item, idx) => ({
+        ...item,
+        id: sanitizeDocId(`tx-${Date.now().toString()}-${idx}-${Math.random().toString(36).slice(2, 5)}`),
+        status: item.status || 'completed',
+      }));
+
+      if (newlyAddedTx.length > 0 || updates.length > 0 || deletes.length > 0) {
+        setTransactions((prev) => {
+          const updatedList = prev
+            .filter((t) => !deleteSet.has(t.id))
+            .map((t) => (updateMap.has(t.id) ? { ...t, ...updateMap.get(t.id)! } : t));
+          return [...newlyAddedTx, ...updatedList];
+        });
+
+        if (firebaseUid) {
+          const batch = writeBatch(db);
+          newlyAddedTx.forEach((nt) => {
+            batch.set(doc(db, 'users', firebaseUid, 'transactions', nt.id), buildTransactionPayload(firebaseUid, nt, true));
+          });
+          updates.forEach(({ id, updates: patch }) => {
+            const safeId = sanitizeDocId(id);
+            const allowed: Record<string, any> = { updatedAt: serverTimestamp() };
+            if (patch.date !== undefined) allowed.date = String(patch.date).slice(0, 32);
+            if (patch.merchant !== undefined) allowed.merchant = String(patch.merchant).slice(0, 160);
+            if (patch.amount !== undefined) allowed.amount = Math.max(0, Number(patch.amount) || 0);
+            if (patch.category !== undefined) allowed.category = String(patch.category).slice(0, 80);
+            if (patch.status !== undefined) allowed.status = patch.status;
+            if (patch.notes !== undefined) allowed.notes = String(patch.notes).slice(0, 500);
+            batch.update(doc(db, 'users', firebaseUid, 'transactions', safeId), allowed);
+          });
+          deletes.forEach((id) => {
+            batch.delete(doc(db, 'users', firebaseUid, 'transactions', sanitizeDocId(id)));
+          });
+          batch.commit().catch(() => {});
+        }
+      }
+
+      let settledInvoicesCount = 0;
+      if (settleInvoices.length > 0) {
+        const settleMap = new Map(settleInvoices.map((s) => [s.id, s]));
+        const paidAt = new Date().toISOString();
+        setInvoices((prev) =>
+          prev.map((inv) => {
+            if (!settleMap.has(inv.id) || inv.paymentStatus === 'paid') return inv;
+            settledInvoicesCount += 1;
+            return { ...inv, paymentStatus: 'paid', paidAt };
+          })
+        );
+        if (firebaseUid) {
+          settleInvoices.forEach(({ id }) => {
+            updateDoc(doc(db, 'users', firebaseUid, 'invoices', sanitizeDocId(id)), {
+              paymentStatus: 'paid',
+              paidAt,
+              updatedAt: serverTimestamp(),
+            }).catch(() => {});
+          });
+        }
+      }
+
+      return {
+        added: newlyAddedTx.length,
+        updated: updates.length,
+        deleted: deletes.length,
+        settledInvoices: settledInvoicesCount,
+      };
+    },
+    [firebaseUid]
+  );
 
   const clearAllTransactions = () => {
     const toDelete = [...transactions];
@@ -1592,6 +2131,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     };
     setInvoices(prev => [newInvoice, ...prev]);
     logAnalyticsEvent('invoice_created', 'invoices', inv.clientName, inv.grandTotal);
+    trackEngagement('Invoice Builder');
 
     if (firebaseUid) {
       const path = `users/${firebaseUid}/invoices/${id}`;
@@ -1779,6 +2319,214 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   }, [firebaseUid, currencySymbol]);
 
+  const updatePayoutConfig = useCallback(
+    async (next: MerchantPayoutConfig): Promise<{ ok: boolean; error?: string }> => {
+      if (!firebaseUid || !isAdminUser) {
+        return { ok: false, error: 'Only verified platform administrators can modify receiving payout details.' };
+      }
+      const paypalClientId = String(next.paypalClientId || '').trim().slice(0, 200);
+      const paypalClientSecret = String(next.paypalClientSecret || '').trim().slice(0, 200);
+      const paypalEnvironment: 'sandbox' | 'live' = next.paypalEnvironment === 'live' ? 'live' : 'sandbox';
+      const paypalMerchantEmail = String(next.paypalMerchantEmail || '').trim().slice(0, 254);
+      const hasPaypalConfigured = Boolean(paypalClientId && paypalClientSecret);
+      const paypalEnabled = typeof next.paypalEnabled === 'boolean' ? next.paypalEnabled : hasPaypalConfigured;
+
+      const normalized: MerchantPayoutConfig = {
+        upiId: String(next.upiId || '').trim().slice(0, 120),
+        payeeName: String(next.payeeName || '').trim().slice(0, 120),
+        bankName: String(next.bankName || '').trim().slice(0, 120),
+        accountHolder: String(next.accountHolder || '').trim().slice(0, 120),
+        accountNumber: String(next.accountNumber || '').trim().slice(0, 40),
+        ifscCode: String(next.ifscCode || '').trim().toUpperCase().slice(0, 32),
+        paypalEnabled,
+        paypalEnvironment,
+        paypalClientId,
+        paypalClientSecret,
+        paypalMerchantEmail,
+        hasPaypalConfigured,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (normalized.upiId && (!normalized.upiId.includes('@') || normalized.upiId.length < 3)) {
+        return { ok: false, error: 'Enter a valid UPI ID (e.g. yourname@okicici).' };
+      }
+      if (paypalMerchantEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(paypalMerchantEmail)) {
+        return { ok: false, error: 'Enter a valid PayPal merchant email address.' };
+      }
+      if (paypalEnabled && (!paypalClientId || !paypalClientSecret)) {
+        return { ok: false, error: 'Provide both your PayPal Client ID and PayPal Client Secret to enable PayPal.' };
+      }
+      if (!normalized.upiId && !normalized.accountNumber && !paypalClientId) {
+        return { ok: false, error: 'Provide UPI, bank account or PayPal credentials.' };
+      }
+      if (!normalized.payeeName) {
+        return { ok: false, error: 'Enter a payee or business name.' };
+      }
+
+      setPayoutConfig(normalized);
+      try {
+        localStorage.setItem(
+          'liddy_payout_public_config',
+          JSON.stringify({
+            upiId: normalized.upiId,
+            payeeName: normalized.payeeName,
+            bankName: normalized.bankName || '',
+            paypalEnabled: Boolean(normalized.paypalEnabled),
+            paypalEnvironment: normalized.paypalEnvironment || 'sandbox',
+            paypalClientId: normalized.paypalClientId || '',
+            paypalMerchantEmail: normalized.paypalMerchantEmail || '',
+            hasPaypalConfigured,
+            updatedAt: normalized.updatedAt,
+          })
+        );
+      } catch {}
+
+      try {
+        const headers = await getAdminAuthHeaders();
+        const serverResp = await fetch('/api/admin/payout-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify(normalized),
+        });
+        if (!serverResp.ok) {
+          const errJson = await serverResp.json().catch(() => ({}));
+          return { ok: false, error: errJson.error || 'Server rejected payout update.' };
+        }
+      } catch (err: any) {
+        return { ok: false, error: err?.message || 'Network error saving payout config to server.' };
+      }
+
+      try {
+        await setDoc(doc(db, 'platform_config', 'payout'), {
+          upiId: normalized.upiId,
+          payeeName: normalized.payeeName,
+          bankName: normalized.bankName || '',
+          accountHolder: normalized.accountHolder || normalized.payeeName || '',
+          accountNumber: normalized.accountNumber || '',
+          ifscCode: normalized.ifscCode || '',
+          paypalEnabled: Boolean(normalized.paypalEnabled),
+          paypalEnvironment: normalized.paypalEnvironment || 'sandbox',
+          paypalClientId: normalized.paypalClientId || '',
+          paypalClientSecret: normalized.paypalClientSecret || '',
+          paypalMerchantEmail: normalized.paypalMerchantEmail || '',
+          updatedBy: firebaseUid,
+          updatedAt: serverTimestamp(),
+        });
+
+        await setDoc(doc(db, 'platform_config', 'payout_public'), {
+          upiId: normalized.upiId,
+          payeeName: normalized.payeeName,
+          bankName: normalized.bankName || '',
+          accountNumberLast4: normalized.accountNumber ? normalized.accountNumber.slice(-4) : '',
+          paypalEnabled: Boolean(normalized.paypalEnabled),
+          paypalEnvironment: normalized.paypalEnvironment || 'sandbox',
+          paypalClientId: normalized.paypalClientId || '',
+          paypalMerchantEmail: normalized.paypalMerchantEmail || '',
+          hasPaypalConfigured,
+          hasPayoutConfigured: Boolean(normalized.upiId || normalized.accountNumber || hasPaypalConfigured),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err: any) {
+        try {
+          handleFirestoreError(err, OperationType.WRITE, 'platform_config/payout');
+        } catch (formatted: any) {
+          return { ok: true, error: formatted?.message || 'Saved on server; cloud sync retry pending.' };
+        }
+      }
+
+      return { ok: true };
+    },
+    [firebaseUid, isAdminUser, getAdminAuthHeaders]
+  );
+
+  const updateAiImageConfig = useCallback(
+    async (next: AiImageConfig): Promise<{ ok: boolean; error?: string }> => {
+      if (!isAdminUser || !firebaseUid) {
+        return { ok: false, error: 'Only verified platform administrators can update image engine credentials.' };
+      }
+
+      const cleanTimeout = Math.min(90, Math.max(15, Math.round(Number(next.queueTimeoutSec) || 45)));
+      const normalized: AiImageConfig = {
+        aiHordeEnabled: next.aiHordeEnabled !== false,
+        aiHordeApiKey: String(next.aiHordeApiKey || '').trim().slice(0, 120),
+        hasAiHordeKey: Boolean(String(next.aiHordeApiKey || '').trim()),
+        cloudflareEnabled: Boolean(next.cloudflareEnabled),
+        cloudflareAccountId: String(next.cloudflareAccountId || '').trim().slice(0, 120),
+        cloudflareApiToken: String(next.cloudflareApiToken || '').trim().slice(0, 250),
+        hasCloudflareConfigured: Boolean(String(next.cloudflareAccountId || '').trim() && String(next.cloudflareApiToken || '').trim()),
+        huggingfaceEnabled: Boolean(next.huggingfaceEnabled),
+        huggingfaceToken: String(next.huggingfaceToken || '').trim().slice(0, 250),
+        hasHuggingfaceConfigured: Boolean(String(next.huggingfaceToken || '').trim()),
+        queueTimeoutSec: cleanTimeout,
+        updatedAt: new Date().toISOString(),
+      };
+      normalized.activeTurboMode = Boolean(
+        (normalized.cloudflareEnabled && normalized.hasCloudflareConfigured) ||
+          (normalized.huggingfaceEnabled && normalized.hasHuggingfaceConfigured)
+      );
+
+      if (normalized.cloudflareEnabled && !normalized.hasCloudflareConfigured) {
+        return { ok: false, error: 'Provide both Cloudflare Account ID and API Token to enable Cloudflare FLUX.' };
+      }
+      if (normalized.huggingfaceEnabled && !normalized.hasHuggingfaceConfigured) {
+        return { ok: false, error: 'Provide a Hugging Face Access Token to enable Hugging Face FLUX.' };
+      }
+
+      try {
+        const headers = await getAdminAuthHeaders();
+        const serverResp = await fetch('/api/admin/ai-image-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify(normalized),
+        });
+        if (!serverResp.ok) {
+          const errJson = await serverResp.json().catch(() => ({}));
+          return { ok: false, error: errJson.error || 'Server rejected image engine update.' };
+        }
+      } catch (err: any) {
+        return { ok: false, error: err?.message || 'Network error saving image engine config.' };
+      }
+
+      setAiImageConfig(normalized);
+
+      try {
+        await setDoc(doc(db, 'platform_config', 'ai_image'), {
+          aiHordeEnabled: normalized.aiHordeEnabled,
+          aiHordeApiKey: normalized.aiHordeApiKey || '',
+          cloudflareEnabled: normalized.cloudflareEnabled,
+          cloudflareAccountId: normalized.cloudflareAccountId || '',
+          cloudflareApiToken: normalized.cloudflareApiToken || '',
+          huggingfaceEnabled: normalized.huggingfaceEnabled,
+          huggingfaceToken: normalized.huggingfaceToken || '',
+          queueTimeoutSec: normalized.queueTimeoutSec,
+          updatedBy: firebaseUid,
+          updatedAt: serverTimestamp(),
+        });
+
+        await setDoc(doc(db, 'platform_config', 'ai_image_public'), {
+          aiHordeEnabled: normalized.aiHordeEnabled,
+          hasAiHordeKey: Boolean(normalized.hasAiHordeKey),
+          cloudflareEnabled: normalized.cloudflareEnabled,
+          hasCloudflareConfigured: Boolean(normalized.hasCloudflareConfigured),
+          huggingfaceEnabled: normalized.huggingfaceEnabled,
+          hasHuggingfaceConfigured: Boolean(normalized.hasHuggingfaceConfigured),
+          queueTimeoutSec: normalized.queueTimeoutSec,
+          activeTurboMode: Boolean(normalized.activeTurboMode),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (err: any) {
+        try {
+          handleFirestoreError(err, OperationType.WRITE, 'platform_config/ai_image');
+        } catch (formatted: any) {
+          return { ok: true, error: formatted?.message || 'Saved on server; cloud sync retry pending.' };
+        }
+      }
+
+      return { ok: true };
+    },
+    [firebaseUid, isAdminUser, getAdminAuthHeaders]
+  );
+
   return (
     <FinMindContext.Provider value={{
       transactions,
@@ -1805,6 +2553,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       logAnalyticsEvent,
       saveIdeationBoard,
       loadIdeationBoards,
+      deleteIdeationBoard,
       organizations,
       createOrganization,
       updateOrganization,
@@ -1812,9 +2561,17 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       refreshOrganizations,
       fetchAdminUsers,
       fetchAdminPayments,
+      getAdminAuthHeaders,
+      fetchAdminIdeationBoards,
+      deleteAdminIdeationBoard,
+      fetchAdminAllowlist,
+      addAdminAllowlistEntry,
+      removeAdminAllowlistEntry,
+      reportClientFailure,
       addTransaction,
       updateTransaction,
       deleteTransaction,
+      applyAgentLedgerOperations,
       clearAllTransactions,
       resetAllData,
       clearAllData,
@@ -1828,6 +2585,10 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       removeFromWatchlist,
       stockPortfolio,
       updateStockPortfolio,
+      payoutConfig,
+      updatePayoutConfig,
+      aiImageConfig,
+      updateAiImageConfig,
       currencySymbol,
       setCurrencySymbol,
       currencyPlacement,
@@ -1846,8 +2607,15 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setLanguage,
       t,
       isGuestTrialExpired,
+      isGuestLocked,
       remainingGuestMinutes,
-      engagementCount
+      remainingGuestActions,
+      engagementCount,
+      freeTierActionCount,
+      isUpgradeModalOpen,
+      upgradeModalReason,
+      openUpgradeModal,
+      closeUpgradeModal,
     }}>
       {children}
     </FinMindContext.Provider>

@@ -206,7 +206,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                     </h4>
                   </div>
                   <p className="text-xs text-neutral-600 dark:text-neutral-300 mt-1">
-                    Sign up now to enable permanent encrypted cloud synchronization, multi-device ledger restore, and persistent AI financial history.
+                    Sign up now to enable permanent encrypted cloud synchronization, multi-device ledger restore and persistent AI financial history.
                   </p>
                 </div>
               </div>
@@ -380,7 +380,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <div>
                   <h5 className="text-xs font-bold text-amber-950 dark:text-amber-300">Deactivate Account / Session</h5>
                   <p className="text-[11px] text-amber-800 dark:text-neutral-400 mt-0.5">
-                    Revoke all active device credentials, suspend cloud sync, and return this terminal to an anonymous baseline.
+                    Revoke all active device credentials, suspend cloud sync and return this terminal to an anonymous baseline.
                   </p>
                 </div>
                 {!showDeactivateConfirm ? (
@@ -415,7 +415,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                 <div>
                   <h5 className="text-xs font-bold text-red-950 dark:text-red-300">Delete Account & Permanent Erasure</h5>
                   <p className="text-[11px] text-red-800 dark:text-neutral-400 mt-0.5">
-                    Permanently purge all financial ledger transactions, invoices, watchlist tickers, and identity records. This action cannot be reversed.
+                    Permanently purge all financial ledger transactions, invoices, watchlist tickers and identity records. This action cannot be reversed.
                   </p>
                 </div>
                 {!showDeleteConfirm ? (

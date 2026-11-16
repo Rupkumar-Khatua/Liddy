@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -8,7 +8,10 @@ import {
   signInWithEmailAndPassword,
   updateProfile,
   sendPasswordResetEmail,
-  onAuthStateChanged
+  onAuthStateChanged,
+  RecaptchaVerifier,
+  signInWithPhoneNumber,
+  type ConfirmationResult,
 } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
@@ -183,3 +186,74 @@ export const logout = async () => {
     throw error;
   }
 };
+
+// ==========================================
+// ISOLATED FIREBASE PHONE AUTH (SMS OTP)
+// Runs on a dedicated secondary Firebase App so primary workspace sign-in is untouched.
+// ==========================================
+function getPhoneVerifyAuth() {
+  const existing = getApps().find((a) => a.name === 'phone-verify-app');
+  const secondaryApp = existing || initializeApp(firebaseConfig, 'phone-verify-app');
+  return getAuth(secondaryApp);
+}
+
+export function mapPhoneAuthError(err: any): string {
+  const code = String(err?.code || '');
+  const msg = String(err?.message || '');
+  if (code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed')) {
+    return 'SMS verification is not enabled in Firebase Authentication yet. Enable Phone sign-in under Firebase Console → Authentication → Sign-in method and authorize this domain.';
+  }
+  if (code === 'auth/invalid-phone-number') {
+    return 'Enter a valid mobile number with country code (for example +919876543210 or +14155552671).';
+  }
+  if (code === 'auth/too-many-requests' || code === 'auth/quota-exceeded') {
+    return 'Too many SMS attempts right now. Please wait a minute and try again.';
+  }
+  if (code === 'auth/captcha-check-failed' || code === 'auth/unauthorized-domain') {
+    return 'Security verification check failed for this domain. Add this app hostname to Firebase Console → Authentication → Settings → Authorized domains.';
+  }
+  if (code === 'auth/invalid-verification-code') {
+    return 'Incorrect 6-digit SMS verification code. Please check your messages and try again.';
+  }
+  if (code === 'auth/code-expired') {
+    return 'Your SMS verification code expired. Request a new code and try again.';
+  }
+  return msg || 'Could not complete SMS phone verification.';
+}
+
+export function createPhoneRecaptcha(containerEl: HTMLElement): RecaptchaVerifier {
+  const phoneAuth = getPhoneVerifyAuth();
+  const verifier = new RecaptchaVerifier(phoneAuth, containerEl, {
+    size: 'invisible',
+  });
+  return verifier;
+}
+
+export async function sendCheckoutPhoneOtp(
+  phoneE164: string,
+  verifier: RecaptchaVerifier
+): Promise<ConfirmationResult> {
+  try {
+    const phoneAuth = getPhoneVerifyAuth();
+    return await signInWithPhoneNumber(phoneAuth, phoneE164, verifier);
+  } catch (err: any) {
+    throw new Error(mapPhoneAuthError(err));
+  }
+}
+
+export async function verifyCheckoutPhoneOtp(
+  confirmation: ConfirmationResult,
+  smsCode: string
+): Promise<{ idToken: string; phoneNumber: string }> {
+  try {
+    const phoneAuth = getPhoneVerifyAuth();
+    const credential = await confirmation.confirm(smsCode.trim());
+    const idToken = await credential.user.getIdToken(true);
+    const phoneNumber = credential.user.phoneNumber || '';
+    // Sign out the temporary secondary app session immediately so workspace auth never changes
+    await signOut(phoneAuth).catch(() => {});
+    return { idToken, phoneNumber };
+  } catch (err: any) {
+    throw new Error(mapPhoneAuthError(err));
+  }
+}

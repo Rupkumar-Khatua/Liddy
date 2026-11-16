@@ -1,4 +1,17 @@
-import { Transaction, MarketData, Invoice, IndustryTheme, MarketNewsItem, ListedCompany } from "../types";
+import {
+  Transaction,
+  MarketData,
+  Invoice,
+  IndustryTheme,
+  MarketNewsItem,
+  ListedCompany,
+  VisualStylePreset,
+  VisualAspectRatio,
+  ImageRenderJobState,
+  AiImageConfig,
+  FinancialContextSnapshot,
+  AgentLedgerOperations,
+} from "../types";
 
 export type AgentMode = 'chat' | 'web' | 'agent' | 'ocr';
 
@@ -12,35 +25,46 @@ export interface AgentAttachment {
 export interface AgentQueryResult {
   text: string;
   groundingUrls?: Array<{ title: string; uri: string }>;
+  activatedTools?: string[];
+  ledgerOperations?: AgentLedgerOperations;
 }
+
+const FRIENDLY_AGENT_ERROR =
+  "Sorry, I wasn't able to proceed with that request right now. Please try again in a moment.";
 
 // --- 1. Chat Assistant (Text, Web Grounding & Multimodal) ---
 export const queryFinanceAgent = async (
   prompt: string,
   mode: AgentMode = 'chat',
   attachment?: AgentAttachment | null,
-  history: Array<{ role: 'user' | 'model'; text: string }> = []
+  history: Array<{ role: 'user' | 'model'; text: string }> = [],
+  financialContext?: FinancialContextSnapshot
 ): Promise<AgentQueryResult> => {
   try {
     const res = await fetch('/api/gemini/agent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, mode, attachment, history }),
+      body: JSON.stringify({ prompt, mode, attachment, history, financialContext }),
     });
 
     if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.error || `Server responded with status ${res.status}`);
+      throw new Error(FRIENDLY_AGENT_ERROR);
     }
 
-    const data = await res.json();
+    const data = await res.json().catch(() => null);
+    if (!data || !data.text) {
+      throw new Error(FRIENDLY_AGENT_ERROR);
+    }
+
     return {
-      text: data.text || "I have analyzed your request.",
+      text: data.text,
       groundingUrls: data.groundingUrls || [],
+      activatedTools: Array.isArray(data.activatedTools) ? data.activatedTools : [],
+      ledgerOperations: data.ledgerOperations || {},
     };
   } catch (err: any) {
     console.warn("Finance agent query notice:", err?.message || err);
-    throw err;
+    throw new Error(FRIENDLY_AGENT_ERROR);
   }
 };
 
@@ -66,39 +90,121 @@ export const analyzeReceipt = async (base64Data: string): Promise<Partial<Transa
   }
 };
 
-// --- 3. Image Generation (Goals) ---
-export const generateGoalImage = async (prompt: string): Promise<string | null> => {
+// --- 3. Image Generation (Goals & Vision Concept Visuals) ---
+export interface GeneratedVisualResult {
+  imageUrl: string | null;
+  format?: 'raster' | 'vector-fallback';
+  mode?: 'ai-raster' | 'ai-vector-fallback' | 'offline-vector-fallback';
+  statusMessage?: string;
+  provider?: string;
+  model?: string;
+}
+
+export const fetchPublicAiImageConfig = async (): Promise<AiImageConfig | null> => {
+  try {
+    const res = await fetch('/api/ai/image-config/public');
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+};
+
+export const startImageRenderJob = async (
+  prompt: string,
+  style: VisualStylePreset = 'auto',
+  aspectRatio: VisualAspectRatio = '16:9'
+): Promise<ImageRenderJobState> => {
+  const res = await fetch('/api/gemini/image-jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt, style, aspectRatio }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.jobId) {
+    throw new Error(data?.error || `Could not start image render (${res.status})`);
+  }
+  return data as ImageRenderJobState;
+};
+
+export const pollImageRenderJob = async (jobId: string): Promise<ImageRenderJobState> => {
+  const res = await fetch(`/api/gemini/image-jobs/${encodeURIComponent(jobId)}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.jobId) {
+    throw new Error(data?.error || `Image status unavailable (${res.status})`);
+  }
+  return data as ImageRenderJobState;
+};
+
+export const triggerImageJobFallback = async (jobId: string): Promise<ImageRenderJobState> => {
+  const res = await fetch(`/api/gemini/image-jobs/${encodeURIComponent(jobId)}/fallback`, {
+    method: 'POST',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.jobId) {
+    throw new Error(data?.error || `Fast visual match failed (${res.status})`);
+  }
+  return data as ImageRenderJobState;
+};
+
+export const cancelImageRenderJob = async (jobId: string): Promise<void> => {
+  await fetch(`/api/gemini/image-jobs/${encodeURIComponent(jobId)}`, {
+    method: 'DELETE',
+  }).catch(() => {});
+};
+
+export const generateGoalVisualDetailed = async (
+  prompt: string,
+  style: VisualStylePreset = 'auto',
+  aspectRatio: VisualAspectRatio = '16:9'
+): Promise<GeneratedVisualResult> => {
   const res = await fetch('/api/gemini/generate-image', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, style, aspectRatio }),
   });
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok || (!data.imageUrl && data.error)) {
     throw new Error(data.error || `Image generation failed (${res.status})`);
   }
-  return data.imageUrl || null;
+  return {
+    imageUrl: data.imageUrl || null,
+    format: data.format,
+    mode: data.mode,
+    statusMessage: data.statusMessage,
+    provider: data.provider,
+    model: data.model,
+  };
+};
+
+export const generateGoalImage = async (prompt: string): Promise<string | null> => {
+  const res = await generateGoalVisualDetailed(prompt);
+  return res.imageUrl;
 };
 
 // --- 4. Enhance Financial Prompt ---
-export const enhanceFinancialPrompt = async (rawPrompt: string): Promise<string> => {
+export const enhanceFinancialPrompt = async (
+  rawPrompt: string,
+  style: VisualStylePreset = 'auto'
+): Promise<string> => {
+  const clean = rawPrompt.trim();
   try {
     const res = await fetch('/api/gemini/enhance-prompt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rawPrompt }),
+      body: JSON.stringify({ rawPrompt: clean, style }),
     });
 
     if (!res.ok) {
-      return `${rawPrompt}, warm architectural lighting, minimalist editorial aesthetic, 8k resolution`;
+      return clean;
     }
 
     const data = await res.json();
-    return data.text || rawPrompt;
+    return data.text || clean;
   } catch (err) {
     console.warn("Enhance prompt notice:", err);
-    return `${rawPrompt}, warm architectural lighting, minimalist editorial aesthetic, 8k resolution`;
+    return clean;
   }
 };
 
@@ -257,7 +363,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '$350.20',
       headquarters: 'Invesco Capital Management, Downers Grove, IL',
       ceo: 'Andrew Schlossberg',
-      description: 'Invesco QQQ tracks the Nasdaq-100 Index, giving targeted access to global technology leaders including Apple, Microsoft, Nvidia, Amazon, Alphabet, and Meta.',
+      description: 'Invesco QQQ tracks the Nasdaq-100 Index, giving targeted access to global technology leaders including Apple, Microsoft, Nvidia, Amazon, Alphabet and Meta.',
       investorUrl: 'https://www.invesco.com/qqq-etf/',
       dividendYield: '0.58%'
     },
@@ -276,7 +382,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '$165.67',
       headquarters: 'Cupertino, California, USA',
       ceo: 'Tim Cook',
-      description: 'Designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and cloud software services.',
+      description: 'Designs, manufactures and markets smartphones, personal computers, tablets, wearables and cloud software services.',
       investorUrl: 'https://investor.apple.com',
       dividendYield: '0.43%'
     },
@@ -295,7 +401,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '$366.50',
       headquarters: 'Redmond, Washington, USA',
       ceo: 'Satya Nadella',
-      description: 'Develops and licenses mission-critical operating systems, productivity suites, Azure cloud computing, and enterprise intelligence.',
+      description: 'Develops and licenses mission-critical operating systems, productivity suites, Azure cloud computing and enterprise intelligence.',
       investorUrl: 'https://www.microsoft.com/en-us/investor',
       dividendYield: '0.71%'
     },
@@ -314,7 +420,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '$45.10',
       headquarters: 'Santa Clara, California, USA',
       ceo: 'Jensen Huang',
-      description: 'Pioneers GPU accelerated computing, tensor core architectures, CUDA software ecosystem, and autonomous networking fabrics.',
+      description: 'Pioneers GPU accelerated computing, tensor core architectures, CUDA software ecosystem and autonomous networking fabrics.',
       investorUrl: 'https://investor.nvidia.com',
       dividendYield: '0.03%'
     },
@@ -333,7 +439,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '$129.40',
       headquarters: 'Mountain View, California, USA',
       ceo: 'Sundar Pichai',
-      description: 'Global technology holding company operating Google search, YouTube, Android, Google Cloud infrastructure, and frontier research.',
+      description: 'Global technology holding company operating Google search, YouTube, Android, Google Cloud infrastructure and frontier research.',
       investorUrl: 'https://abc.xyz/investor',
       dividendYield: '0.45%'
     },
@@ -352,7 +458,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '$118.35',
       headquarters: 'Seattle, Washington, USA',
       ceo: 'Andy Jassy',
-      description: 'Operates Amazon Web Services (AWS) infrastructure, retail marketplaces, logistics robotics, and digital advertising platforms.',
+      description: 'Operates Amazon Web Services (AWS) infrastructure, retail marketplaces, logistics robotics and digital advertising platforms.',
       investorUrl: 'https://ir.aboutamazon.com',
       dividendYield: '0.00%'
     },
@@ -371,7 +477,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '$279.40',
       headquarters: 'Menlo Park, California, USA',
       ceo: 'Mark Zuckerberg',
-      description: 'Builds social connectivity technologies, family of apps (Instagram, WhatsApp), Llama open model architectures, and Reality Labs.',
+      description: 'Builds social connectivity technologies, family of apps (Instagram, WhatsApp), Llama open model architectures and Reality Labs.',
       investorUrl: 'https://investor.atmeta.com',
       dividendYield: '0.34%'
     },
@@ -390,7 +496,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '$138.80',
       headquarters: 'Austin, Texas, USA',
       ceo: 'Elon Musk',
-      description: 'Designs electric vehicles, Megapack energy storage batteries, solar roof installations, and autonomous driving neural networks.',
+      description: 'Designs electric vehicles, Megapack energy storage batteries, solar roof installations and autonomous driving neural networks.',
       investorUrl: 'https://ir.tesla.com',
       dividendYield: '0.00%'
     },
@@ -409,7 +515,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '2,220.30 ₹',
       headquarters: 'Mumbai, Maharashtra, India',
       ceo: 'Mukesh Ambani',
-      description: 'Largest private sector conglomerate in India spanning hydrocarbon refining, petrochemicals, Jio digital networks, and Reliance Retail.',
+      description: 'Largest private sector conglomerate in India spanning hydrocarbon refining, petrochemicals, Jio digital networks and Reliance Retail.',
       investorUrl: 'https://www.ril.com/investors',
       dividendYield: '0.33%'
     },
@@ -428,7 +534,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '3,313.00 ₹',
       headquarters: 'Mumbai, Maharashtra, India',
       ceo: 'K. Krithivasan',
-      description: 'Global leader in IT consulting and business solutions operating across 55 countries, with enterprise clients in banking, retail, and manufacturing.',
+      description: 'Global leader in IT consulting and business solutions operating across 55 countries, with enterprise clients in banking, retail and manufacturing.',
       investorUrl: 'https://www.tcs.com/investor-relations',
       dividendYield: '1.30%'
     },
@@ -447,7 +553,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '1,363.55 ₹',
       headquarters: 'Mumbai, Maharashtra, India',
       ceo: 'Sashidhar Jagdishan',
-      description: 'Premier private sector banking institution in India providing wholesale, retail, treasury, and digital payment infrastructure.',
+      description: 'Premier private sector banking institution in India providing wholesale, retail, treasury and digital payment infrastructure.',
       investorUrl: 'https://www.hdfcbank.com/personal/investor-relations',
       dividendYield: '1.14%'
     },
@@ -466,7 +572,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '1,358.35 ₹',
       headquarters: 'Bengaluru, Karnataka, India',
       ceo: 'Salil Parekh',
-      description: 'Global software major delivering digital agile services, Topaz generative solutions, and enterprise business process transformations.',
+      description: 'Global software major delivering digital agile services, Topaz generative solutions and enterprise business process transformations.',
       investorUrl: 'https://www.infosys.com/investors.html',
       dividendYield: '2.36%'
     },
@@ -485,7 +591,7 @@ export const getInstantMarketBaseline = (): MarketData => {
       week52Low: '102.50 ₹',
       headquarters: 'Gurugram, Haryana, India',
       ceo: 'Deepinder Goyal',
-      description: 'Parent holding conglomerate (Eternal) operating four distinct business divisions: Zomato (food delivery & discovery), Blinkit (10-minute quick commerce), Hyperpure (B2B restaurant supply chain), and District (live ticketing and dining-out events).',
+      description: 'Parent holding conglomerate (Eternal) operating four distinct business divisions: Zomato (food delivery & discovery), Blinkit (10-minute quick commerce), Hyperpure (B2B restaurant supply chain) and District (live ticketing and dining-out events).',
       investorUrl: 'https://www.zomato.com/investor-relations',
       dividendYield: '0.00%'
     }

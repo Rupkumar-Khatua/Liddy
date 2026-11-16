@@ -40,11 +40,8 @@ export const CompanyDetailModal: React.FC<CompanyDetailModalProps> = ({ company,
     }
   };
 
-  const handleOpenInvestorRelations = () => {
-    trackEngagement(`IR Visit: ${company.ticker}`);
-    const url = company.investorUrl || company.websiteUrl || `https://www.google.com/finance/quote/${company.ticker}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
-  };
+  const investorUrl =
+    company.investorUrl || company.websiteUrl || `https://www.google.com/finance/quote/${company.ticker}`;
 
   const modalContent = (
     <div 
@@ -184,7 +181,7 @@ export const CompanyDetailModal: React.FC<CompanyDetailModalProps> = ({ company,
           <div className="p-3.5 rounded-2xl bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-900/50 flex items-center justify-between text-xs text-indigo-900 dark:text-indigo-200">
             <div className="flex items-center gap-2.5">
               <span className="text-base font-bold text-indigo-600 dark:text-indigo-400">✓</span>
-              <span>Official regulatory market feed synchronized across NYSE, NASDAQ, NSE, BSE, LSE, and Tokyo exchanges.</span>
+              <span>Official regulatory market feed synchronized across NYSE, NASDAQ, NSE, BSE, LSE and Tokyo exchanges.</span>
             </div>
           </div>
         </div>
@@ -203,13 +200,16 @@ export const CompanyDetailModal: React.FC<CompanyDetailModalProps> = ({ company,
           </button>
 
           <div className="flex items-center gap-2.5">
-            <button
-              onClick={handleOpenInvestorRelations}
+            <a
+              href={investorUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => trackEngagement(`IR Visit: ${company.ticker}`)}
               className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-bold text-neutral-800 dark:text-neutral-200 transition-colors flex items-center gap-1.5 cursor-pointer hover-border-glow"
             >
               <span>Investor Relations</span>
               <span>↗</span>
-            </button>
+            </a>
             <button
               onClick={onClose}
               className="px-6 py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"

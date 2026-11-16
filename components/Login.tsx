@@ -8,6 +8,8 @@ import architecturalBg from '../src/assets/images/architectural_wealth_glass_179
 interface LoginProps {
   onSuccess?: () => void;
   onDismiss?: () => void;
+  onReturnHome?: () => void;
+  forceLock?: boolean;
   featureReason?: string;
   isModal?: boolean;
 }
@@ -15,10 +17,14 @@ interface LoginProps {
 export const Login: React.FC<LoginProps> = ({
   onSuccess,
   onDismiss,
+  onReturnHome,
+  forceLock = false,
   featureReason,
   isModal = true,
 }) => {
-  const { currentUser, loginUser, logoutUser } = useFinMind();
+  const { currentUser, loginUser, logoutUser, isGuestLocked } = useFinMind();
+  const isHardLocked = Boolean(forceLock);
+  const disableGuestBypass = Boolean(forceLock || isGuestLocked);
   
   // Initialize mode intelligently based on context reason
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>(() => {
@@ -54,6 +60,7 @@ export const Login: React.FC<LoginProps> = ({
 
   // Safe dismiss & return that guaranteed unlocks body scroll
   const handleReturnToDashboard = () => {
+    if (isHardLocked) return;
     document.body.style.overflow = '';
     document.documentElement.style.overflow = '';
     if (onDismiss) onDismiss();
@@ -69,7 +76,7 @@ export const Login: React.FC<LoginProps> = ({
     if (isModal) {
       document.body.style.overflow = 'hidden';
       const onKeyDown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
+        if (e.key === 'Escape' && !isHardLocked) {
           handleReturnToDashboard();
         }
       };
@@ -83,7 +90,7 @@ export const Login: React.FC<LoginProps> = ({
         window.dispatchEvent(new Event('scroll'));
       };
     }
-  }, [isModal]);
+  }, [isModal, isHardLocked]);
 
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
@@ -99,7 +106,8 @@ export const Login: React.FC<LoginProps> = ({
           isGuest: false,
         };
         loginUser(mappedUser);
-        handleReturnToDashboard();
+        if (onSuccess) onSuccess();
+        else if (onDismiss) onDismiss();
       }
     } catch (err: any) {
       if (err?.code === 'auth/popup-closed-by-user') {
@@ -199,7 +207,8 @@ export const Login: React.FC<LoginProps> = ({
           loginUser(mappedUser);
           setSuccessMsg('Account created successfully! Synchronizing cloud workspace...');
           setTimeout(() => {
-            handleReturnToDashboard();
+            if (onSuccess) onSuccess();
+            else if (onDismiss) onDismiss();
           }, 500);
         } catch (signUpErr: any) {
           if (signUpErr?.code === 'auth/email-already-in-use') {
@@ -219,7 +228,8 @@ export const Login: React.FC<LoginProps> = ({
           loginUser(mappedUser);
           setSuccessMsg('Signed in successfully! Syncing cloud balance sheets...');
           setTimeout(() => {
-            handleReturnToDashboard();
+            if (onSuccess) onSuccess();
+            else if (onDismiss) onDismiss();
           }, 500);
         } catch (signInErr: any) {
           setErrorMsg(mapFirebaseAuthError(signInErr));
@@ -231,6 +241,7 @@ export const Login: React.FC<LoginProps> = ({
   };
 
   const handleGuestContinue = () => {
+    if (disableGuestBypass) return;
     loginUser({
       displayName: 'Guest Explorer',
       email: 'guest@liddy.ai',
@@ -264,8 +275,8 @@ export const Login: React.FC<LoginProps> = ({
           : undefined
       }
       onClick={(e) => {
-        // Only trigger backdrop dismiss if clicked on outer container after 400ms mount cooldown
-        if (isModal && e.target === e.currentTarget && Date.now() - mountedTime > 400) {
+        // Only trigger backdrop dismiss if clicked on outer container after 400ms mount cooldown and not hard-locked
+        if (isModal && !isHardLocked && e.target === e.currentTarget && Date.now() - mountedTime > 400) {
           handleReturnToDashboard();
         }
       }}
@@ -281,28 +292,50 @@ export const Login: React.FC<LoginProps> = ({
           <div>
             {/* Top Navigation & Return Bar */}
             <div className="flex items-center justify-between mb-6">
-              <button
-                type="button"
-                onClick={handleReturnToDashboard}
-                className="group inline-flex items-center gap-2 text-xs font-bold text-neutral-600 dark:text-neutral-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all py-1.5 px-3 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer active:scale-95"
-                title="Return to App Dashboard"
-              >
-                <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                </svg>
-                <span>Return to Dashboard</span>
-              </button>
+              {isHardLocked ? (
+                <div className="flex items-center justify-between w-full gap-3">
+                  <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                    Sign up required to continue
+                  </span>
+                  {onReturnHome && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        document.body.style.overflow = '';
+                        document.documentElement.style.overflow = '';
+                        onReturnHome();
+                      }}
+                      className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white transition-colors cursor-pointer"
+                    >
+                      Back to Home Page
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleReturnToDashboard}
+                    className="group inline-flex items-center gap-2 text-xs font-bold text-neutral-600 dark:text-neutral-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-all py-1.5 px-3 rounded-full hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer active:scale-95"
+                    title="Return to App Dashboard"
+                  >
+                    <svg className="w-4 h-4 transition-transform group-hover:-translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+                    </svg>
+                    <span>Return to Dashboard</span>
+                  </button>
 
-              {/* Close ✕ Button */}
-              <button
-                type="button"
-                onClick={handleReturnToDashboard}
-                aria-label="Close authentication modal"
-                className="flex items-center justify-center w-8 h-8 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-all cursor-pointer"
-                title="Close (Esc)"
-              >
-                <span className="text-sm font-black">✕</span>
-              </button>
+                  <button
+                    type="button"
+                    onClick={handleReturnToDashboard}
+                    aria-label="Close authentication modal"
+                    className="flex items-center justify-center w-8 h-8 rounded-full bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:bg-neutral-200 dark:hover:bg-neutral-700 transition-all cursor-pointer"
+                    title="Close (Esc)"
+                  >
+                    <span className="text-sm font-black">✕</span>
+                  </button>
+                </>
+              )}
             </div>
 
             {/* Brand Monogram */}
@@ -315,8 +348,8 @@ export const Login: React.FC<LoginProps> = ({
               </h1>
               <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1.5 leading-relaxed">
                 {authMode === 'signup'
-                  ? 'Track everyday expenses, connect your stock portfolio, create invoices, and stay updated with live market news.'
-                  : 'Sign in to access your synced stock portfolio, saved goals, invoices, and receipt history.'}
+                  ? 'Track everyday expenses, connect your stock portfolio, create invoices and stay updated with live market news.'
+                  : 'Sign in to access your synced stock portfolio, saved goals, invoices and receipt history.'}
               </p>
             </div>
 
@@ -357,14 +390,11 @@ export const Login: React.FC<LoginProps> = ({
               </div>
             )}
 
-            {/* Contextual Feature Gate Notice (if triggered after immersion) */}
+            {/* Subtle Feature Context (No highlighted banner or blinking dot) */}
             {featureReason && !isAlreadyLoggedIn && (
-              <div className="mb-4 p-3 bg-indigo-50/80 dark:bg-indigo-950/40 rounded-2xl border border-indigo-200/80 dark:border-indigo-800/80 flex items-center gap-2.5 text-xs text-indigo-950 dark:text-indigo-200 animate-enter">
-                <div className="w-2 h-2 rounded-full bg-indigo-600 dark:bg-indigo-400 animate-ping shrink-0" />
-                <span className="leading-snug">
-                  Authentication requested for: <strong className="font-bold underline decoration-indigo-400">{featureReason}</strong>
-                </span>
-              </div>
+              <p className="mb-4 text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                {featureReason}
+              </p>
             )}
 
             {/* Mode Selector (Sign Up vs Sign In) */}
@@ -571,16 +601,18 @@ export const Login: React.FC<LoginProps> = ({
               <span>Sign in with Google</span>
             </button>
 
-            {/* Continue as Guest Escape Link */}
-            <div className="mt-3 text-center">
-              <button
-                type="button"
-                onClick={handleGuestContinue}
-                className="text-xs text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white font-medium transition-colors py-1 px-3 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
-              >
-                Want to explore first? Continue as Guest &rarr;
-              </button>
-            </div>
+            {/* Continue as Guest Escape Link (hidden once guest trial ends) */}
+            {!disableGuestBypass && (
+              <div className="mt-3 text-center">
+                <button
+                  type="button"
+                  onClick={handleGuestContinue}
+                  className="text-xs text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white font-medium transition-colors py-1 px-3 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 cursor-pointer"
+                >
+                  Want to explore first? Continue as Guest &rarr;
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Bottom Switcher */}
@@ -639,7 +671,7 @@ export const Login: React.FC<LoginProps> = ({
                 Institutional Baseline. Absolute Privacy.
               </h2>
               <p className="text-xs text-neutral-300 leading-relaxed font-light">
-                Zero synthetic mock data or fabricated merchants. Every stock ticker, invoice, and currency conversion is grounded in verifiable exchange feeds.
+                Zero synthetic mock data or fabricated merchants. Every stock ticker, invoice and currency conversion is grounded in verifiable exchange feeds.
               </p>
             </div>
 

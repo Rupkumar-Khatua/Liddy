@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useEffect } from 'react';
 import { WindowId } from '../types';
 import { WINDOW_ROUTES, WORKSPACE_SWITCHER_WINDOWS } from '../utils/router';
 import { Logo } from './Logo';
@@ -14,6 +14,30 @@ interface FullScreenWindowShellProps {
   darkSurface?: boolean;
 }
 
+function isInsideScrollableXOrNoSwipe(target: EventTarget | null): boolean {
+  let el = target as HTMLElement | null;
+  while (el) {
+    if (
+      el.dataset?.noSwipe === 'true' ||
+      el.tagName === 'INPUT' ||
+      el.tagName === 'TEXTAREA' ||
+      el.tagName === 'SELECT' ||
+      el.getAttribute('role') === 'slider'
+    ) {
+      return true;
+    }
+    const style = window.getComputedStyle(el);
+    if (
+      (style.overflowX === 'auto' || style.overflowX === 'scroll') &&
+      el.scrollWidth > el.clientWidth + 8
+    ) {
+      return true;
+    }
+    el = el.parentElement;
+  }
+  return false;
+}
+
 export const FullScreenWindowShell: React.FC<FullScreenWindowShellProps> = ({
   activeWindow,
   onNavigateWindow,
@@ -22,8 +46,69 @@ export const FullScreenWindowShell: React.FC<FullScreenWindowShellProps> = ({
   hideBottomAd = false,
   darkSurface = false,
 }) => {
-  const { planTier, currentUser, openAuthModal, themeMode, setThemeMode } = useFinMind();
+  const {
+    planTier,
+    currentUser,
+    openAuthModal,
+    themeMode,
+    setThemeMode,
+    remainingGuestMinutes,
+    remainingGuestActions,
+    isGuestLocked,
+  } = useFinMind();
   const routeMeta = WINDOW_ROUTES[activeWindow] || WINDOW_ROUTES.overview;
+  const mobileBarRef = useRef<HTMLDivElement | null>(null);
+  const touchSwipeStartRef = useRef<{ x: number; y: number; time: number; blocked: boolean } | null>(null);
+
+  useEffect(() => {
+    const bar = mobileBarRef.current;
+    if (!bar) return;
+    const activeBtn = bar.querySelector('[data-active-section="true"]') as HTMLElement | null;
+    if (activeBtn && typeof activeBtn.scrollIntoView === 'function') {
+      activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }, [activeWindow]);
+
+  const handleShellTouchStart = (e: React.TouchEvent) => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 1024) return;
+    if (e.touches.length !== 1) {
+      touchSwipeStartRef.current = null;
+      return;
+    }
+    const t = e.touches[0];
+    touchSwipeStartRef.current = {
+      x: t.clientX,
+      y: t.clientY,
+      time: Date.now(),
+      blocked: isInsideScrollableXOrNoSwipe(e.target),
+    };
+  };
+
+  const handleShellTouchEnd = (e: React.TouchEvent) => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 1024) return;
+    const start = touchSwipeStartRef.current;
+    touchSwipeStartRef.current = null;
+    if (!start || start.blocked) return;
+    if ((e.nativeEvent as any).__consumedByNestedSwipe) return;
+    if (e.changedTouches.length !== 1) return;
+
+    const endTouch = e.changedTouches[0];
+    const dx = endTouch.clientX - start.x;
+    const dy = endTouch.clientY - start.y;
+    const elapsed = Date.now() - start.time;
+
+    if (elapsed > 700 || Math.abs(dx) < 75 || Math.abs(dx) < Math.abs(dy) * 1.65) {
+      return;
+    }
+
+    const currIdx = WORKSPACE_SWITCHER_WINDOWS.indexOf(activeWindow);
+    if (currIdx < 0) return;
+
+    const nextIdx = dx < 0 ? currIdx + 1 : currIdx - 1;
+    if (nextIdx >= 0 && nextIdx < WORKSPACE_SWITCHER_WINDOWS.length) {
+      onNavigateWindow(WORKSPACE_SWITCHER_WINDOWS[nextIdx]);
+    }
+  };
 
   const cycleTheme = () => {
     const next = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'system' : 'light';
@@ -113,17 +198,35 @@ export const FullScreenWindowShell: React.FC<FullScreenWindowShellProps> = ({
             )}
 
             {(!currentUser || currentUser.isGuest) ? (
-              <button
-                type="button"
-                onClick={() => openAuthModal('Sign In')}
-                className={`hidden sm:inline-flex px-3 py-2 rounded-xl text-xs font-semibold border whitespace-nowrap cursor-pointer ${
-                  darkSurface
-                    ? 'border-white/15 text-neutral-200 hover:bg-white/10'
-                    : 'border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-900'
-                }`}
-              >
-                Sign In
-              </button>
+              <div className="hidden sm:flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('Sign Up')}
+                  className={`text-[11px] font-mono tabular-nums whitespace-nowrap transition-colors cursor-pointer ${
+                    isGuestLocked
+                      ? 'text-rose-500 font-semibold'
+                      : darkSurface
+                      ? 'text-neutral-300 hover:text-white'
+                      : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                  }`}
+                  title="Create a free account for unlimited workspace access and cloud sync"
+                >
+                  {isGuestLocked
+                    ? 'Trial ended'
+                    : `Guest · ${remainingGuestMinutes}m · ${remainingGuestActions} left`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('Sign Up')}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold border whitespace-nowrap cursor-pointer ${
+                    darkSurface
+                      ? 'border-white/15 text-neutral-200 hover:bg-white/10'
+                      : 'border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-900'
+                  }`}
+                >
+                  Sign In
+                </button>
+              </div>
             ) : (
               <button
                 type="button"
@@ -198,7 +301,7 @@ export const FullScreenWindowShell: React.FC<FullScreenWindowShellProps> = ({
         </div>
 
         {/* Mobile Quick Section Bar */}
-        <div className="lg:hidden px-4 pb-2.5 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        <div ref={mobileBarRef} className="lg:hidden px-4 pb-2.5 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
           {WORKSPACE_SWITCHER_WINDOWS.map((winId) => {
             const meta = WINDOW_ROUTES[winId];
             const isActive = activeWindow === winId;
@@ -206,8 +309,9 @@ export const FullScreenWindowShell: React.FC<FullScreenWindowShellProps> = ({
               <button
                 key={winId}
                 type="button"
+                data-active-section={isActive ? 'true' : 'false'}
                 onClick={() => onNavigateWindow(winId)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 cursor-pointer transition-colors ${
                   isActive
                     ? darkSurface
                       ? 'bg-white text-neutral-950 font-bold'
@@ -227,8 +331,12 @@ export const FullScreenWindowShell: React.FC<FullScreenWindowShellProps> = ({
       {/* Fixed Header Spacer */}
       <div className="h-[104px] lg:h-16 shrink-0" aria-hidden="true" />
 
-      {/* Main Workspace Content */}
-      <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      {/* Main Workspace Content (Swipeable Horizontally on Mobile & Tablet) */}
+      <main
+        onTouchStart={handleShellTouchStart}
+        onTouchEnd={handleShellTouchEnd}
+        className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8"
+      >
         {children}
 
         {!hideBottomAd && (

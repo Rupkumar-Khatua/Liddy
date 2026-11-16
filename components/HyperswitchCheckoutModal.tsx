@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import QRCode from 'qrcode';
+import { loadScript } from '@paypal/paypal-js';
+import type { ConfirmationResult, RecaptchaVerifier } from 'firebase/auth';
 import { useFinMind } from '../context/FinMindContext';
 import {
   BillingCycle,
@@ -18,6 +20,9 @@ import {
   getGmailAccessToken,
   getGmailTokenEmail,
   hasGmailAccessToken,
+  createPhoneRecaptcha,
+  sendCheckoutPhoneOtp,
+  verifyCheckoutPhoneOtp,
 } from '../firebase';
 import {
   dispatchInvoiceViaGmailApi,
@@ -33,8 +38,6 @@ interface HyperswitchCheckoutModalProps {
   onSuccess?: (payment: HyperswitchPaymentRecord) => void;
 }
 
-const WALLET_PROVIDERS = ['Apple Pay', 'Google Pay', 'Link Express'];
-
 export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> = ({
   isOpen,
   planTier,
@@ -42,7 +45,7 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
   onClose,
   onSuccess,
 }) => {
-  const { currentUser, currencySymbol, recordGatewayPayment } = useFinMind();
+  const { currentUser, currencySymbol, recordGatewayPayment, payoutConfig } = useFinMind();
 
   const detectDefaultRegion = (): PaymentRegion => {
     try {
@@ -56,13 +59,20 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
 
   const [region, setRegion] = useState<PaymentRegion>(detectDefaultRegion);
   const [selectedRail, setSelectedRail] = useState<PaymentRail>(() =>
-    detectDefaultRegion() === 'IN' ? 'UPI_QR' : 'CARD'
+    detectDefaultRegion() === 'IN' ? 'UPI_QR' : 'PAYPAL'
   );
   const [cycle, setCycle] = useState<BillingCycle>(billingCycle);
 
   const [intentData, setIntentData] = useState<{
     paymentId: string;
     upiUri?: string;
+    payeeName?: string;
+    payeeUpiId?: string;
+    payoutConfigured?: boolean;
+    paypalConfigured?: boolean;
+    paypalClientId?: string;
+    paypalEnvironment?: 'sandbox' | 'live';
+    paypalMerchantEmail?: string;
     referenceCode: string;
     connector: string;
   } | null>(null);
@@ -71,21 +81,28 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
   const [processing, setProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Two-step verification state — prevents single-click bypass
-  const [authStep, setAuthStep] = useState<'instrument' | 'otp' | 'confirmed'>('instrument');
-  const [otpChallengeNotice, setOtpChallengeNotice] = useState<string | null>(null);
+  // Two-step real SMS verification state via Firebase Phone Auth + PayPal Smart Buttons
+  const [authStep, setAuthStep] = useState<'instrument' | 'otp' | 'paypal_capture' | 'confirmed'>('instrument');
   const [maskedInstrument, setMaskedInstrument] = useState<string>('');
+  const [countryDialCode, setCountryDialCode] = useState<string>(() =>
+    detectDefaultRegion() === 'IN' ? '+91' : '+1'
+  );
+  const [phoneDigits, setPhoneDigits] = useState('');
+  const [smsConfirmation, setSmsConfirmation] = useState<ConfirmationResult | null>(null);
+  const [verifiedPhoneAuth, setVerifiedPhoneAuth] = useState<{ idToken: string; phoneNumber: string } | null>(null);
+  const [sendingSms, setSendingSms] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [smsSentTo, setSmsSentTo] = useState<string | null>(null);
   const [verificationCode, setVerificationCode] = useState('');
+  const recaptchaContainerRef = useRef<HTMLDivElement | null>(null);
+  const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
+  const paypalButtonsContainerRef = useRef<HTMLDivElement | null>(null);
+  const [paypalSdkLoading, setPaypalSdkLoading] = useState(false);
 
-  // Buyer billing email & instrument inputs
+  // Buyer billing email & UPI inputs
   const [billingEmail, setBillingEmail] = useState(currentUser?.email || '');
   const [upiId, setUpiId] = useState('');
   const [upiRefInput, setUpiRefInput] = useState('');
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvv, setCardCvv] = useState('');
-  const [cardName, setCardName] = useState(currentUser?.displayName || '');
-  const [walletProvider, setWalletProvider] = useState(WALLET_PROVIDERS[0]);
 
   // Confirmed payment + formatted email invoice state
   const [confirmedPayment, setConfirmedPayment] = useState<HyperswitchPaymentRecord | null>(null);
@@ -96,6 +113,28 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
   const [gmailSendStatus, setGmailSendStatus] = useState<string | null>(null);
   const [gmailError, setGmailError] = useState<string | null>(null);
 
+  const clearRecaptcha = useCallback(() => {
+    try {
+      recaptchaVerifierRef.current?.clear();
+    } catch {}
+    recaptchaVerifierRef.current = null;
+    if (recaptchaContainerRef.current) {
+      recaptchaContainerRef.current.innerHTML = '';
+    }
+  }, []);
+
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
+
+  useEffect(() => {
+    return () => clearRecaptcha();
+  }, [clearRecaptcha]);
+
   useEffect(() => {
     setCycle(billingCycle);
   }, [billingCycle]);
@@ -104,10 +143,7 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
     if (currentUser?.email && !billingEmail) {
       setBillingEmail(currentUser.email);
     }
-    if (currentUser?.displayName && !cardName) {
-      setCardName(currentUser.displayName);
-    }
-  }, [currentUser, billingEmail, cardName]);
+  }, [currentUser, billingEmail]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -123,8 +159,12 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
       setInitializing(true);
       setErrorMsg(null);
       setAuthStep('instrument');
-      setOtpChallengeNotice(null);
+      setSmsConfirmation(null);
+      setVerifiedPhoneAuth(null);
+      setSmsSentTo(null);
+      setResendCooldown(0);
       setVerificationCode('');
+      clearRecaptcha();
       try {
         const resp = await fetch('/api/payments/create-intent', {
           method: 'POST',
@@ -141,11 +181,18 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
         });
         const data = await resp.json();
         if (!resp.ok) {
-          throw new Error(data.error || 'Could not initialize payment session.');
+          throw new Error(data.error || 'Could not start checkout session.');
         }
         setIntentData({
           paymentId: data.paymentId,
           upiUri: data.upiUri,
+          payeeName: data.payeeName,
+          payeeUpiId: data.payeeUpiId,
+          payoutConfigured: Boolean(data.payoutConfigured),
+          paypalConfigured: Boolean(data.paypalConfigured || payoutConfig.hasPaypalConfigured),
+          paypalClientId: data.paypalClientId || payoutConfig.paypalClientId || '',
+          paypalEnvironment: data.paypalEnvironment || payoutConfig.paypalEnvironment || 'sandbox',
+          paypalMerchantEmail: data.paypalMerchantEmail || payoutConfig.paypalMerchantEmail || '',
           referenceCode: data.referenceCode,
           connector: data.connector,
         });
@@ -161,12 +208,12 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
           setQrDataUrl(null);
         }
       } catch (err: any) {
-        setErrorMsg(err?.message || 'Unable to connect to checkout router.');
+        setErrorMsg(err?.message || 'Unable to prepare payment session.');
       } finally {
         setInitializing(false);
       }
     },
-    [planTier, currentUser, billingEmail]
+    [planTier, currentUser, billingEmail, clearRecaptcha, payoutConfig.hasPaypalConfigured, payoutConfig.paypalClientId, payoutConfig.paypalEnvironment, payoutConfig.paypalMerchantEmail]
   );
 
   useEffect(() => {
@@ -181,18 +228,134 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
     }
   }, [isOpen, region, selectedRail, cycle, initIntent]);
 
+  // Mount official PayPal Smart Buttons once SMS is verified for International PayPal flow
+  useEffect(() => {
+    if (!isOpen || authStep !== 'paypal_capture' || !verifiedPhoneAuth || !intentData?.paypalClientId) {
+      return;
+    }
+    const container = paypalButtonsContainerRef.current;
+    if (!container) return;
+
+    let cancelled = false;
+    setPaypalSdkLoading(true);
+    setErrorMsg(null);
+    container.innerHTML = '';
+
+    loadScript({
+      clientId: intentData.paypalClientId,
+      currency: 'USD',
+      intent: 'capture',
+      disableFunding: 'card,credit,paylater',
+    })
+      .then((paypal) => {
+        if (cancelled || !paypal?.Buttons || !paypalButtonsContainerRef.current) return;
+        paypalButtonsContainerRef.current.innerHTML = '';
+        return paypal
+          .Buttons({
+            style: {
+              layout: 'vertical',
+              color: 'gold',
+              shape: 'rect',
+              label: 'paypal',
+              height: 44,
+            },
+            createOrder: async () => {
+              setErrorMsg(null);
+              const resp = await fetch('/api/payments/paypal/create-order', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  paymentId: intentData.paymentId,
+                  firebasePhoneIdToken: verifiedPhoneAuth.idToken,
+                  verifiedPhoneNumber: verifiedPhoneAuth.phoneNumber,
+                }),
+              });
+              const data = await resp.json();
+              if (!resp.ok || !data.orderId) {
+                throw new Error(data.error || 'Unable to start PayPal order.');
+              }
+              return data.orderId;
+            },
+            onApprove: async (data, actions) => {
+              setProcessing(true);
+              setErrorMsg(null);
+              try {
+                const resp = await fetch('/api/payments/paypal/capture-order', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    paymentId: intentData.paymentId,
+                    orderId: data.orderID,
+                    firebasePhoneIdToken: verifiedPhoneAuth.idToken,
+                    verifiedPhoneNumber: verifiedPhoneAuth.phoneNumber,
+                    userId: currentUser?.uid || 'guest',
+                    userEmail: billingEmail.trim(),
+                    userName: currentUser?.displayName || 'Liddy Member',
+                  }),
+                });
+                const result = await resp.json();
+                if (!resp.ok) {
+                  if (result.issue === 'INSTRUMENT_DECLINED' && actions?.restart) {
+                    return actions.restart();
+                  }
+                  throw new Error(result.error || 'PayPal capture failed.');
+                }
+                const confirmed: HyperswitchPaymentRecord = result.payment;
+                await recordGatewayPayment(confirmed);
+                setConfirmedPayment(confirmed);
+                if (result.receiptEmail) {
+                  setReceiptEmail(result.receiptEmail);
+                }
+                setAuthStep('confirmed');
+                onSuccess?.(confirmed);
+              } catch (err: any) {
+                setErrorMsg(err?.message || 'Unable to complete PayPal capture.');
+              } finally {
+                setProcessing(false);
+              }
+            },
+            onCancel: () => {
+              setErrorMsg('PayPal checkout window was closed before completing payment.');
+            },
+            onError: (err: any) => {
+              setErrorMsg(err?.message || 'PayPal encountered an error loading checkout.');
+            },
+          })
+          .render(paypalButtonsContainerRef.current);
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setErrorMsg(err?.message || 'Unable to load PayPal Smart Buttons. Verify your PayPal Client ID in Admin.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPaypalSdkLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isOpen,
+    authStep,
+    verifiedPhoneAuth,
+    intentData?.paypalClientId,
+    intentData?.paymentId,
+    currentUser?.uid,
+    currentUser?.displayName,
+    billingEmail,
+    recordGatewayPayment,
+    onSuccess,
+  ]);
+
   if (!isOpen) return null;
 
   const handleRegionSwitch = (nextRegion: PaymentRegion) => {
     setRegion(nextRegion);
-    const defaultRail = REGIONAL_PAYMENT_OPTIONS[nextRegion][0]?.rail || 'CARD';
+    setCountryDialCode(nextRegion === 'IN' ? '+91' : '+1');
+    const defaultRail = REGIONAL_PAYMENT_OPTIONS[nextRegion][0]?.rail || (nextRegion === 'IN' ? 'UPI_QR' : 'PAYPAL');
     setSelectedRail(defaultRail);
     setErrorMsg(null);
-  };
-
-  const formatCardNumberInput = (val: string) => {
-    const digits = val.replace(/\D/g, '').slice(0, 16);
-    return digits.replace(/(.{4})/g, '$1 ').trim();
   };
 
   const validateBillingEmail = (): boolean => {
@@ -207,21 +370,29 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
   const handleAuthorizeInstrument = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!intentData?.paymentId) {
-      setErrorMsg('Initializing payment session, please wait a moment.');
+      setErrorMsg('Preparing checkout session, please wait a moment.');
       return;
     }
     setErrorMsg(null);
     if (!validateBillingEmail()) return;
 
-    // For UPI QR flow, validate payment reference directly before confirming
     if (selectedRail === 'UPI_QR') {
-      const cleanUtr = upiRefInput.trim();
-      if (!/^[A-Za-z0-9]{10,24}$/.test(cleanUtr) || /^([A-Za-z0-9])\1+$/.test(cleanUtr)) {
-        setErrorMsg('Scan the UPI QR code and enter the 10–24 character UPI reference number from your payment app.');
+      if (!intentData.payoutConfigured) {
+        setErrorMsg('The account owner must configure a receiving UPI ID in the Admin Portal first.');
         return;
       }
-      await submitFinalConfirm(cleanUtr);
-      return;
+      const cleanUtr = upiRefInput.trim();
+      if (!/^[A-Za-z0-9]{10,24}$/.test(cleanUtr) || /^([A-Za-z0-9])\1+$/.test(cleanUtr)) {
+        setErrorMsg('Scan the UPI QR code and enter the 10–24 character reference number from your UPI app.');
+        return;
+      }
+    }
+
+    if (selectedRail === 'PAYPAL') {
+      if (!intentData.paypalConfigured || !intentData.paypalClientId) {
+        setErrorMsg('PayPal receiving credentials are not configured in the Admin Portal yet.');
+        return;
+      }
     }
 
     setProcessing(true);
@@ -232,13 +403,8 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
         body: JSON.stringify({
           paymentId: intentData.paymentId,
           paymentRail: selectedRail,
-          cardNumber: selectedRail === 'CARD' ? cardNumber.replace(/\s+/g, '') : undefined,
-          cardExpiry: selectedRail === 'CARD' ? cardExpiry.trim() : undefined,
-          cardCvv: selectedRail === 'CARD' ? cardCvv.trim() : undefined,
-          cardHolder: selectedRail === 'CARD' ? cardName.trim() : undefined,
+          upiRef: selectedRail === 'UPI_QR' ? upiRefInput.trim() : undefined,
           upiId: selectedRail === 'UPI_ID' ? upiId.trim() : undefined,
-          walletProvider: selectedRail === 'WALLET' ? walletProvider : undefined,
-          walletHandle: selectedRail === 'WALLET' ? billingEmail.trim() : undefined,
           userEmail: billingEmail.trim(),
         }),
       });
@@ -248,27 +414,84 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
       }
 
       setMaskedInstrument(data.maskedInstrument || selectedRail);
-      setOtpChallengeNotice(data.challengeCodeNotice || 'Enter the 6-digit verification code to confirm this payment.');
+      setSmsConfirmation(null);
+      setVerifiedPhoneAuth(null);
+      setSmsSentTo(null);
+      setVerificationCode('');
       setAuthStep('otp');
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Instrument verification failed. Check details and try again.');
+      setErrorMsg(err?.message || 'Verification failed. Check details and try again.');
     } finally {
       setProcessing(false);
     }
   };
 
-  const submitFinalConfirm = async (explicitUtr?: string) => {
+  const buildE164Phone = (): string => {
+    const dial = countryDialCode.replace(/[^\d+]/g, '');
+    const digits = phoneDigits.replace(/\D/g, '');
+    if (!digits) return '';
+    return `${dial.startsWith('+') ? dial : `+${dial}`}${digits}`;
+  };
+
+  const handleSendRealSms = async () => {
+    setErrorMsg(null);
+    const e164 = buildE164Phone();
+    if (!/^\+[1-9]\d{7,14}$/.test(e164)) {
+      setErrorMsg('Enter a valid mobile number with your country code (for example 9876543210).');
+      return;
+    }
+    if (!recaptchaContainerRef.current) {
+      setErrorMsg('Security check container is still loading. Please try again.');
+      return;
+    }
+
+    setSendingSms(true);
+    try {
+      clearRecaptcha();
+      const verifier = createPhoneRecaptcha(recaptchaContainerRef.current);
+      recaptchaVerifierRef.current = verifier;
+      const confirmation = await sendCheckoutPhoneOtp(e164, verifier);
+      setSmsConfirmation(confirmation);
+      setSmsSentTo(e164);
+      setResendCooldown(30);
+    } catch (err: any) {
+      clearRecaptcha();
+      setErrorMsg(err?.message || 'Unable to send verification SMS. Please check the number and try again.');
+    } finally {
+      setSendingSms(false);
+    }
+  };
+
+  const submitFinalConfirm = async () => {
     if (!intentData?.paymentId) return;
     if (!validateBillingEmail()) return;
 
-    if (selectedRail !== 'UPI_QR' && verificationCode.trim().length !== 6) {
-      setErrorMsg('Enter the 6-digit gateway verification code to complete checkout.');
+    if (!smsConfirmation) {
+      setErrorMsg('Send and verify an SMS code on your mobile number before completing payment.');
+      return;
+    }
+
+    if (verificationCode.trim().length !== 6) {
+      setErrorMsg('Enter the 6-digit SMS code sent to your mobile phone.');
       return;
     }
 
     setErrorMsg(null);
     setProcessing(true);
     try {
+      const { idToken, phoneNumber } = await verifyCheckoutPhoneOtp(
+        smsConfirmation,
+        verificationCode.trim()
+      );
+      const confirmedPhone = phoneNumber || smsSentTo || buildE164Phone();
+      clearRecaptcha();
+
+      if (selectedRail === 'PAYPAL') {
+        setVerifiedPhoneAuth({ idToken, phoneNumber: confirmedPhone });
+        setAuthStep('paypal_capture');
+        return;
+      }
+
       const resp = await fetch('/api/payments/confirm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -276,11 +499,12 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
           paymentId: intentData.paymentId,
           paymentRail: selectedRail,
           upiId: upiId.trim() || undefined,
-          upiRef: explicitUtr || (selectedRail === 'UPI_QR' ? upiRefInput.trim() : undefined),
-          verificationCode: selectedRail !== 'UPI_QR' ? verificationCode.trim() : undefined,
+          upiRef: selectedRail === 'UPI_QR' ? upiRefInput.trim() : undefined,
+          firebasePhoneIdToken: idToken,
+          verifiedPhoneNumber: confirmedPhone,
           userId: currentUser?.uid || 'guest',
           userEmail: billingEmail.trim(),
-          userName: cardName.trim() || currentUser?.displayName || 'Liddy Member',
+          userName: currentUser?.displayName || 'Liddy Member',
         }),
       });
       const result = await resp.json();
@@ -297,7 +521,7 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
       setAuthStep('confirmed');
       onSuccess?.(confirmed);
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Payment verification failed. Check your code and try again.');
+      setErrorMsg(err?.message || 'SMS verification failed. Check your code and try again.');
     } finally {
       setProcessing(false);
     }
@@ -498,18 +722,65 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
               </button>
             </div>
           </div>
+        ) : authStep === 'paypal_capture' ? (
+          <div className="p-6 sm:p-8 space-y-5">
+            <div className="rounded-2xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/70 dark:bg-indigo-950/30 p-4 space-y-1.5">
+              <p className="text-xs font-mono uppercase tracking-wider text-indigo-700 dark:text-sky-400 font-bold">
+                Final Step · Complete via PayPal
+              </p>
+              <p className="text-sm font-bold text-neutral-900 dark:text-white">
+                Authorize ${charge.totalCharge.toLocaleString()} USD for {plan.name}
+              </p>
+              <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                SMS verified ({verifiedPhoneAuth?.phoneNumber}) · PayPal {intentData?.paypalEnvironment === 'live' ? 'Live' : 'Sandbox'}
+                {intentData?.paypalMerchantEmail ? ` · Merchant: ${intentData.paypalMerchantEmail}` : ''}
+              </p>
+            </div>
+
+            {errorMsg && (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-300 text-xs font-semibold">
+                {errorMsg}
+              </div>
+            )}
+
+            <div className="rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-neutral-900/50 p-5 space-y-4">
+              {paypalSdkLoading && (
+                <div className="py-4 text-center text-xs font-mono text-neutral-500">
+                  Loading PayPal Smart Buttons...
+                </div>
+              )}
+              <div ref={paypalButtonsContainerRef} id="paypal-smart-button-container" className="min-h-[54px]" />
+            </div>
+
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <button
+                type="button"
+                disabled={processing}
+                onClick={() => {
+                  setAuthStep('instrument');
+                  setErrorMsg(null);
+                }}
+                className="px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 text-xs font-bold cursor-pointer"
+              >
+                &larr; Change Payment Method
+              </button>
+              <span className="text-[11px] font-mono text-neutral-500">
+                Secured via PayPal Orders v2
+              </span>
+            </div>
+          </div>
         ) : authStep === 'otp' ? (
           <div className="p-6 sm:p-8 space-y-5">
             <div className="rounded-2xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/70 dark:bg-indigo-950/30 p-4 space-y-1.5">
               <p className="text-xs font-mono uppercase tracking-wider text-indigo-700 dark:text-sky-400 font-bold">
-                Step 2 of 2 · Payment Security Check
+                Step 2 of {selectedRail === 'PAYPAL' ? '3' : '2'} · Mobile SMS Verification
               </p>
               <p className="text-sm font-bold text-neutral-900 dark:text-white">
-                Confirming {charge.symbol}{charge.totalCharge.toLocaleString()} {charge.currency} on {maskedInstrument}
+                Confirming {charge.symbol}{charge.totalCharge.toLocaleString()} {charge.currency} via {maskedInstrument}
               </p>
-              {otpChallengeNotice && (
-                <p className="text-xs font-mono text-indigo-800 dark:text-sky-300 pt-1">
-                  {otpChallengeNotice}
+              {intentData?.payeeUpiId && selectedRail !== 'PAYPAL' && (
+                <p className="text-xs text-neutral-600 dark:text-neutral-300">
+                  Receiving account: <strong>{intentData.payeeName || 'Owner'}</strong> ({intentData.payeeUpiId})
                 </p>
               )}
             </div>
@@ -520,26 +791,81 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
               </div>
             )}
 
-            <div className="space-y-2">
+            {/* Mobile number input & Send SMS button */}
+            <div className="space-y-3">
               <label className="block text-xs font-mono uppercase text-neutral-500 font-bold">
-                Enter 6-Digit Verification Code
+                Mobile Number for SMS Confirmation
               </label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={verificationCode}
-                onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="6-digit code"
-                className="w-full px-4 py-3.5 rounded-2xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-white/10 text-lg font-mono tracking-[0.35em] text-center font-extrabold outline-none focus:border-indigo-500"
-              />
+              <div className="flex flex-col sm:flex-row gap-2">
+                <select
+                  value={countryDialCode}
+                  onChange={(e) => setCountryDialCode(e.target.value)}
+                  disabled={sendingSms || processing}
+                  className="px-3 py-3 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-white/10 text-xs font-mono font-bold text-neutral-900 dark:text-white outline-none focus:border-indigo-500 sm:w-32"
+                >
+                  <option value="+91">IN (+91)</option>
+                  <option value="+1">US (+1)</option>
+                  <option value="+44">UK (+44)</option>
+                  <option value="+65">SG (+65)</option>
+                  <option value="+971">AE (+971)</option>
+                  <option value="+61">AU (+61)</option>
+                </select>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  value={phoneDigits}
+                  onChange={(e) => setPhoneDigits(e.target.value.replace(/\D/g, '').slice(0, 14))}
+                  placeholder="Enter mobile number"
+                  disabled={sendingSms || processing}
+                  className="flex-1 px-4 py-3 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-white/10 text-sm font-mono font-semibold text-neutral-900 dark:text-white outline-none focus:border-indigo-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleSendRealSms}
+                  disabled={sendingSms || processing || resendCooldown > 0}
+                  className="px-4 py-3 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-xs font-bold whitespace-nowrap cursor-pointer disabled:opacity-50"
+                >
+                  {sendingSms
+                    ? 'Sending SMS...'
+                    : resendCooldown > 0
+                    ? `Resend in ${resendCooldown}s`
+                    : smsSentTo
+                    ? 'Resend SMS Code'
+                    : 'Send SMS Code'}
+                </button>
+              </div>
+              <div ref={recaptchaContainerRef} />
             </div>
+
+            {smsSentTo && (
+              <div className="space-y-2 animate-enter">
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
+                  SMS verification code sent to {smsSentTo}.
+                </div>
+                <label className="block text-xs font-mono uppercase text-neutral-500 font-bold pt-1">
+                  Enter 6-Digit SMS Code
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  placeholder="6-digit SMS code"
+                  className="w-full px-4 py-3.5 rounded-2xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-white/10 text-lg font-mono tracking-[0.35em] text-center font-extrabold outline-none focus:border-indigo-500"
+                />
+              </div>
+            )}
 
             <div className="flex items-center justify-between gap-3 pt-2">
               <button
                 type="button"
-                disabled={processing}
+                disabled={processing || sendingSms}
                 onClick={() => {
+                  clearRecaptcha();
+                  setSmsConfirmation(null);
+                  setVerifiedPhoneAuth(null);
+                  setSmsSentTo(null);
                   setAuthStep('instrument');
                   setErrorMsg(null);
                 }}
@@ -550,13 +876,15 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
 
               <button
                 type="button"
-                disabled={processing || verificationCode.length !== 6}
-                onClick={() => submitFinalConfirm()}
+                disabled={processing || !smsConfirmation || verificationCode.length !== 6}
+                onClick={submitFinalConfirm}
                 className="px-7 py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-sm font-bold shadow-lg cursor-pointer"
               >
                 {processing
-                  ? 'Confirming Charge...'
-                  : `Verify & Complete ${charge.symbol}${charge.totalCharge.toLocaleString()}`}
+                  ? 'Verifying...'
+                  : selectedRail === 'PAYPAL'
+                  ? 'Verify SMS & Continue to PayPal →'
+                  : `Verify SMS & Complete ${charge.symbol}${charge.totalCharge.toLocaleString()}`}
               </button>
             </div>
           </div>
@@ -671,18 +999,28 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
             <form onSubmit={handleAuthorizeInstrument} className="space-y-4">
               {selectedRail === 'UPI_QR' && region === 'IN' && (
                 <div className="rounded-2xl border border-neutral-200 dark:border-white/10 p-5 flex flex-col sm:flex-row items-center gap-6 bg-white dark:bg-neutral-900/50">
-                  <div className="w-40 h-40 rounded-2xl bg-white p-2 border border-neutral-200 flex items-center justify-center shrink-0">
-                    {initializing ? (
-                      <span className="text-xs font-mono text-neutral-400">Generating QR...</span>
-                    ) : qrDataUrl ? (
+                  {intentData?.payoutConfigured && qrDataUrl ? (
+                    <div className="w-40 h-40 rounded-2xl bg-white p-2 border border-neutral-200 flex items-center justify-center shrink-0">
                       <img src={qrDataUrl} alt="UPI QR Checkout Code" className="w-full h-full object-contain" />
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : (
+                    <div className="w-40 h-40 rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-3 border border-amber-200 dark:border-amber-800 flex flex-col items-center justify-center text-center shrink-0 gap-2">
+                      <span className="text-xs font-bold text-amber-800 dark:text-amber-200">
+                        {initializing ? 'Loading QR...' : 'Merchant Setup Pending'}
+                      </span>
+                    </div>
+                  )}
                   <div className="space-y-3 flex-1 w-full">
                     <div>
-                      <h4 className="text-sm font-bold">Scan with any UPI App</h4>
+                      <h4 className="text-sm font-bold">
+                        {intentData?.payeeUpiId
+                          ? `Pay ${intentData.payeeName || 'Owner'} (${intentData.payeeUpiId})`
+                          : 'Platform Settlement Pending'}
+                      </h4>
                       <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
-                        Pay seamlessly using GPay, PhonePe, Paytm, BHIM, or any bank app, then enter your UPI reference number below to confirm.
+                        {intentData?.payoutConfigured
+                          ? 'Scan with any UPI app, enter your 12-digit UTR number below, then verify with your mobile SMS code.'
+                          : 'The platform owner has not configured receiving payout details in the Admin Console yet.'}
                       </p>
                     </div>
                     <input
@@ -690,7 +1028,7 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
                       required
                       value={upiRefInput}
                       onChange={(e) => setUpiRefInput(e.target.value)}
-                      placeholder="12-digit UPI reference number"
+                      placeholder="12-digit UPI reference / UTR number"
                       className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-white/10 text-xs font-mono outline-none focus:border-indigo-500"
                     />
                     {intentData?.upiUri && (
@@ -719,103 +1057,40 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
                     className="w-full px-4 py-3 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-white/10 text-sm font-mono outline-none focus:border-indigo-500"
                   />
                   <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-                    We confirm your UPI ID and send a 6-digit security code before completing your payment.
+                    {intentData?.payeeUpiId
+                      ? `Payments go to ${intentData.payeeName || 'Owner'} (${intentData.payeeUpiId}). Next step confirms via SMS.`
+                      : 'Next step verifies your payment via mobile SMS.'}
                   </p>
                 </div>
               )}
 
-              {selectedRail === 'CARD' && (
-                <div className="rounded-2xl border border-neutral-200 dark:border-white/10 p-5 space-y-3.5 bg-white dark:bg-neutral-900/50">
-                  <div>
-                    <label className="block text-[11px] font-mono uppercase text-neutral-500 mb-1">
-                      Cardholder Name
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      value={cardName}
-                      onChange={(e) => setCardName(e.target.value)}
-                      placeholder="Full name on card"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-white/10 text-sm outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-mono uppercase text-neutral-500 mb-1">
-                      {region === 'IN' ? 'RuPay / Visa / Mastercard Number' : 'Global Card Number (Visa / Mastercard / Amex)'}
-                    </label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      required
-                      value={cardNumber}
-                      onChange={(e) => setCardNumber(formatCardNumberInput(e.target.value))}
-                      placeholder="16-digit valid card number"
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-white/10 text-sm font-mono outline-none focus:border-indigo-500"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-mono uppercase text-neutral-500 mb-1">
-                        Expiry (MM/YY)
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={5}
-                        value={cardExpiry}
-                        onChange={(e) => {
-                          let v = e.target.value.replace(/[^\d]/g, '').slice(0, 4);
-                          if (v.length >= 3) v = `${v.slice(0, 2)}/${v.slice(2)}`;
-                          setCardExpiry(v);
-                        }}
-                        placeholder="08/28"
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-white/10 text-sm font-mono outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-mono uppercase text-neutral-500 mb-1">
-                        CVV / CVC
-                      </label>
-                      <input
-                        type="password"
-                        inputMode="numeric"
-                        required
-                        maxLength={4}
-                        value={cardCvv}
-                        onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                        placeholder="•••"
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-white/10 text-sm font-mono outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {selectedRail === 'WALLET' && region === 'INTL' && (
+              {selectedRail === 'PAYPAL' && region === 'INTL' && (
                 <div className="rounded-2xl border border-neutral-200 dark:border-white/10 p-5 space-y-3 bg-white dark:bg-neutral-900/50">
-                  <label className="block text-xs font-mono uppercase text-neutral-500">
-                    Select Digital Wallet Provider
-                  </label>
-                  <select
-                    value={walletProvider}
-                    onChange={(e) => setWalletProvider(e.target.value)}
-                    className="w-full px-4 py-3 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-white/10 text-sm font-semibold outline-none focus:border-indigo-500"
-                  >
-                    {WALLET_PROVIDERS.map((w) => (
-                      <option key={w} value={w}>
-                        {w}
-                      </option>
-                    ))}
-                  </select>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                    Requires a quick 6-digit confirmation sent to your billing email ({billingEmail || 'enter above'}).
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-extrabold text-neutral-900 dark:text-white">
+                      PayPal International Checkout
+                    </span>
+                    <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded-md font-bold ${
+                      intentData?.paypalConfigured && intentData?.paypalClientId
+                        ? 'bg-sky-500/15 text-sky-600 dark:text-sky-300'
+                        : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                    }`}>
+                      {intentData?.paypalConfigured && intentData?.paypalClientId
+                        ? `PayPal ${intentData.paypalEnvironment === 'live' ? 'Live' : 'Sandbox'}`
+                        : 'Setup Required'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-neutral-600 dark:text-neutral-300 leading-relaxed">
+                    {intentData?.paypalConfigured && intentData?.paypalClientId
+                      ? 'Verify your mobile phone number via SMS in the next step, then sign in with your PayPal balance or linked PayPal account to capture payment immediately.'
+                      : 'The platform administrator must save PayPal Client ID and Client Secret in the Admin Portal before International PayPal payments can run.'}
                   </p>
                 </div>
               )}
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
                 <p className="text-[11px] font-mono text-neutral-500 dark:text-neutral-400">
-                  Encrypted · 2-Step Verified Checkout
+                  SMS-Verified Checkout
                 </p>
 
                 <button
@@ -823,11 +1098,7 @@ export const HyperswitchCheckoutModal: React.FC<HyperswitchCheckoutModalProps> =
                   disabled={processing || initializing}
                   className="px-7 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-bold shadow-lg transition-all cursor-pointer whitespace-nowrap"
                 >
-                  {processing
-                    ? 'Verifying...'
-                    : selectedRail === 'UPI_QR'
-                    ? `Confirm & Pay ${charge.symbol}${charge.totalCharge.toLocaleString()}`
-                    : `Continue to Verification →`}
+                  {processing ? 'Checking...' : 'Continue to SMS Verification →'}
                 </button>
               </div>
             </form>

@@ -215,7 +215,7 @@ const Markets: React.FC = () => {
         setSelectedTicker(resolvedCompany.ticker);
         setLookupFeedback(`Live quote loaded: ${resolvedCompany.name} (${resolvedCompany.ticker}) — ${resolvedCompany.price}`);
       } else {
-        setLookupFeedback(`Could not verify active market quote for "${symbolToFind}". Try a symbol like PLTR, UBER, AAPL, or INFY.`);
+        setLookupFeedback(`Could not verify active market quote for "${symbolToFind}". Try a symbol like PLTR, UBER, AAPL or INFY.`);
       }
     } catch {
       setLookupFeedback('Lookup error. Please verify the symbol and try again.');
@@ -300,7 +300,7 @@ const Markets: React.FC = () => {
             </span>
           </div>
           <p className="text-neutral-500 dark:text-neutral-400 mt-1 text-xs">
-            Real-time synced market indices, crypto spot pricing, exchange equities, and breaking financial wires across NYSE, NASDAQ, NSE, BSE, LSE, and TSE.
+            Real-time synced market indices, crypto spot pricing, exchange equities and breaking financial wires across NYSE, NASDAQ, NSE, BSE, LSE and TSE.
           </p>
         </div>
 
@@ -370,7 +370,7 @@ const Markets: React.FC = () => {
               </h3>
             </div>
             <p className="text-xs text-neutral-500 dark:text-neutral-300 mt-0.5">
-              Live exchange quotes across NYSE, NASDAQ, NSE, BSE, LSE, Euronext, TSE, and HKEX. Search any global symbol.
+              Live exchange quotes across NYSE, NASDAQ, NSE, BSE, LSE, Euronext, TSE and HKEX. Search any global symbol.
             </p>
           </div>
 
@@ -580,7 +580,7 @@ const Markets: React.FC = () => {
                       </h4>
                       <p className="text-xs text-neutral-500 dark:text-neutral-300 leading-relaxed">
                         {companySearch.trim()
-                          ? `Query NYSE, NASDAQ, NSE, BSE, LSE, and Tokyo exchanges directly for live market quotes on "${companySearch.toUpperCase()}".`
+                          ? `Query NYSE, NASDAQ, NSE, BSE, LSE and Tokyo exchanges directly for live market quotes on "${companySearch.toUpperCase()}".`
                           : 'Select another exchange filter above or enter any ticker symbol in the search box.'}
                       </p>
                       {companySearch.trim() && (

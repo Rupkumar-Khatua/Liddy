@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import QRCode from 'qrcode';
+import { useFinMind } from '../context/FinMindContext';
 
 interface UPIPaymentModalProps {
   isOpen: boolean;
@@ -18,13 +19,14 @@ export const UPIPaymentModal: React.FC<UPIPaymentModalProps> = ({
   onClose,
   amount,
   currency = '₹',
-  defaultUpiId = 'merchant@upi',
-  defaultPayeeName = 'Store Checkout',
+  defaultUpiId = '',
+  defaultPayeeName = '',
   invoiceNumber = 'BILL-01',
   onPaymentSuccess
 }) => {
-  const [upiId, setUpiId] = useState(defaultUpiId);
-  const [payeeName, setPayeeName] = useState(defaultPayeeName);
+  const { payoutConfig } = useFinMind();
+  const [upiId, setUpiId] = useState(defaultUpiId || payoutConfig.upiId || '');
+  const [payeeName, setPayeeName] = useState(defaultPayeeName || payoutConfig.payeeName || 'Billing Desk');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const [status, setStatus] = useState<'pending' | 'verifying' | 'completed'>('pending');
@@ -33,14 +35,14 @@ export const UPIPaymentModal: React.FC<UPIPaymentModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      setUpiId(defaultUpiId || 'merchant@upi');
-      setPayeeName(defaultPayeeName || 'Store Checkout');
+      setUpiId(defaultUpiId || payoutConfig.upiId || '');
+      setPayeeName(defaultPayeeName || payoutConfig.payeeName || 'Billing Desk');
       setStatus('pending');
       setUtrNumber('');
       setUtrError(null);
       setCopied(false);
     }
-  }, [isOpen, defaultUpiId, defaultPayeeName, invoiceNumber]);
+  }, [isOpen, defaultUpiId, defaultPayeeName, payoutConfig.upiId, payoutConfig.payeeName, invoiceNumber]);
 
   useEffect(() => {
     if (isOpen) {
@@ -52,10 +54,13 @@ export const UPIPaymentModal: React.FC<UPIPaymentModalProps> = ({
     }
   }, [isOpen]);
 
-  const upiUri = `upi://pay?pa=${encodeURIComponent(upiId)}&pn=${encodeURIComponent(payeeName)}&am=${amount.toFixed(2)}&tn=${encodeURIComponent(`Settlement for ${invoiceNumber}`)}&cu=INR`;
+  const trimmedUpi = upiId.trim();
+  const upiUri = trimmedUpi
+    ? `upi://pay?pa=${encodeURIComponent(trimmedUpi)}&pn=${encodeURIComponent(payeeName || 'Billing Desk')}&am=${amount.toFixed(2)}&tn=${encodeURIComponent(`Settlement for ${invoiceNumber}`)}&cu=INR`
+    : '';
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && upiUri) {
       QRCode.toDataURL(upiUri, {
         width: 320,
         margin: 1,
@@ -66,6 +71,8 @@ export const UPIPaymentModal: React.FC<UPIPaymentModalProps> = ({
       })
         .then(url => setQrDataUrl(url))
         .catch(err => console.warn('Notice generating UPI QR:', err));
+    } else if (isOpen) {
+      setQrDataUrl('');
     }
   }, [isOpen, upiUri]);
 
@@ -114,7 +121,7 @@ export const UPIPaymentModal: React.FC<UPIPaymentModalProps> = ({
             </div>
             <div>
               <h3 className="text-xl font-extrabold tracking-tight">Verified UPI Payment</h3>
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">Scan via GPay, PhonePe, Paytm, or BHIM and enter your UTR ID</p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Scan via GPay, PhonePe, Paytm or BHIM and enter your UTR ID</p>
             </div>
           </div>
           <button
@@ -132,8 +139,8 @@ export const UPIPaymentModal: React.FC<UPIPaymentModalProps> = ({
             {qrDataUrl ? (
               <img src={qrDataUrl} alt="UPI QR Code" className="w-52 h-52 rounded-2xl object-contain" />
             ) : (
-              <div className="w-52 h-52 flex items-center justify-center text-xs text-neutral-400">
-                Generating QR...
+              <div className="w-52 h-52 flex flex-col items-center justify-center text-xs text-neutral-500 p-4 gap-2 text-center">
+                <span>Enter your receiving UPI ID below to generate this invoice QR code.</span>
               </div>
             )}
           </div>

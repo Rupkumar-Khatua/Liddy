@@ -48,7 +48,7 @@ const INDUSTRY_CONFIGS: Record<IndustryTheme, { label: string; sampleNotes: stri
 };
 
 export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onCancel }) => {
-  const { addInvoice, addTransaction, currencySymbol } = useFinMind();
+  const { addInvoice, addTransaction, currencySymbol, payoutConfig } = useFinMind();
 
   const [industry, setIndustry] = useState<IndustryTheme>('SERVICES');
   const [templateStyle, setTemplateStyle] = useState<InvoiceTemplateStyle>('classic');
@@ -61,7 +61,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
   const [dueDate, setDueDate] = useState(new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]);
   const [currency, setCurrency] = useState(currencySymbol || '₹');
 
-  const [senderName, setSenderName] = useState('');
+  const [senderName, setSenderName] = useState(() => payoutConfig.payeeName || '');
   const [senderDetails, setSenderDetails] = useState('');
   const [senderTaxId, setSenderTaxId] = useState('');
 
@@ -70,10 +70,16 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
   const [clientTaxId, setClientTaxId] = useState('');
   const [clientDetails, setClientDetails] = useState('');
 
-  const [upiId, setUpiId] = useState('');
-  const [payeeName, setPayeeName] = useState('');
+  const [upiId, setUpiId] = useState(() => payoutConfig.upiId || '');
+  const [payeeName, setPayeeName] = useState(() => payoutConfig.payeeName || payoutConfig.accountHolder || '');
   const [notes, setNotes] = useState(INDUSTRY_CONFIGS['SERVICES'].sampleNotes);
   const [items, setItems] = useState<InvoiceLineItem[]>([]);
+
+  useEffect(() => {
+    if (payoutConfig.upiId && !upiId) setUpiId(payoutConfig.upiId);
+    if (payoutConfig.payeeName && !payeeName) setPayeeName(payoutConfig.payeeName);
+    if (payoutConfig.payeeName && !senderName) setSenderName(payoutConfig.payeeName);
+  }, [payoutConfig, upiId, payeeName, senderName]);
 
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
@@ -108,13 +114,17 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
   }, [subtotal, discountTotal, taxTotal]);
 
   useEffect(() => {
-    const activeUpi = upiId.trim() || 'merchant@upi';
-    const activePayee = payeeName.trim() || senderName.trim() || 'Billing Desk';
+    const activeUpi = upiId.trim() || payoutConfig.upiId?.trim() || '';
+    if (!activeUpi) {
+      setEmbeddedQr('');
+      return;
+    }
+    const activePayee = payeeName.trim() || senderName.trim() || payoutConfig.payeeName || 'Billing Desk';
     const uri = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activePayee)}&am=${grandTotal.toFixed(2)}&tn=${encodeURIComponent(invoiceNumber)}&cu=INR`;
     QRCode.toDataURL(uri, { width: 140, margin: 1 })
       .then((url) => setEmbeddedQr(url))
       .catch(() => {});
-  }, [upiId, payeeName, senderName, grandTotal, invoiceNumber]);
+  }, [upiId, payeeName, senderName, payoutConfig.upiId, payoutConfig.payeeName, grandTotal, invoiceNumber]);
 
   const draftInvoiceObject: Invoice = useMemo(
     () => ({
@@ -371,7 +381,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
     setSavedSuccessMsg(
       isSettled
         ? '✓ Invoice settled and recorded into your ledger.'
-        : '✓ Invoice saved cleanly. Preview, export PDF, or collect payment anytime.'
+        : '✓ Invoice saved cleanly. Preview, export PDF or collect payment anytime.'
     );
     setTimeout(() => {
       setSavedSuccessMsg(null);
@@ -388,7 +398,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
             Structured Invoice Builder
           </h2>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Create clean bills with GST/Tax IDs, A4 / US Letter / 80mm POS sizing, live preview overlay, and UPI QR.
+            Create clean bills with GST/Tax IDs, A4 / US Letter / 80mm POS sizing, live preview overlay and UPI QR.
           </p>
         </div>
 
@@ -945,8 +955,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
           onClose={() => setIsUpiModalOpen(false)}
           amount={grandTotal}
           currency="₹"
-          defaultUpiId={upiId || 'merchant@upi'}
-          defaultPayeeName={payeeName || senderName || 'Store Billing'}
+          defaultUpiId={upiId || payoutConfig.upiId || ''}
+          defaultPayeeName={payeeName || senderName || payoutConfig.payeeName || 'Billing Desk'}
           invoiceNumber={invoiceNumber}
           onPaymentSuccess={(method, upiRef) => {
             handleSaveInvoice({ method, upiRef });

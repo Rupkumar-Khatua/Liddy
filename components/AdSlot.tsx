@@ -81,7 +81,7 @@ export const AdSlot: React.FC<AdSlotProps> = ({
               <span>Ad-Free Workspace + Email Receipts</span>
             </div>
             <p className="text-sm font-semibold text-neutral-900 dark:text-white">
-              Unlock unlimited multi-format invoices, instant Gmail receipt delivery, and an ad-free daily workspace.
+              Unlock unlimited multi-format invoices, instant Gmail receipt delivery and an ad-free daily workspace.
             </p>
           </div>
 

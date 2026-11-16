@@ -11,10 +11,11 @@ import { useFinMind } from '../context/FinMindContext';
 import { FormattedMessage } from './FormattedMessage';
 
 const QUICK_AUTOMATIONS = [
+  { id: 'cleanse_ledger', label: 'Cleanse Ledger', prompt: 'Cleanse my ledger automatically: remove duplicates, normalize merchant names, standardize generic categories and report what changed.' },
   { id: 'balance_sheet', label: 'Balance Sheet', prompt: 'Compile a balance sheet for my current asset portfolio and liabilities with equity commentary.' },
-  { id: 'cash_flow_audit', label: 'Cash Flow Audit', prompt: 'Run a thorough cash flow analysis identifying burn rate, runway, and liquidity optimization.' },
-  { id: 'tax_optimization', label: 'Tax Strategy', prompt: 'Review potential tax-loss harvesting, deduction opportunities, and shelter strategies.' },
-  { id: 'ratios_analysis', label: 'Financial Ratios', prompt: 'Compute debt-to-equity, current ratio, operating margin, and overall financial health score.' },
+  { id: 'cash_flow_audit', label: 'Cash Flow Audit', prompt: 'Run a thorough cash flow analysis identifying burn rate, runway and liquidity optimization.' },
+  { id: 'tax_optimization', label: 'Tax Strategy', prompt: 'Review potential tax-loss harvesting, deduction opportunities and shelter strategies.' },
+  { id: 'ratios_analysis', label: 'Financial Ratios', prompt: 'Compute debt-to-equity, current ratio, operating margin and overall financial health score.' },
 ];
 
 const MODES: Array<{
@@ -35,21 +36,21 @@ const MODES: Array<{
     id: 'web',
     label: 'Web Search',
     badge: 'Live Grounding',
-    description: 'Real-time quotes, central bank updates, and verified market news.',
+    description: 'Real-time quotes, central bank updates and verified market news.',
     icon: '🌐',
   },
   {
     id: 'agent',
     label: 'Agent Mode',
     badge: 'CFO Copilot',
-    description: 'Multi-step cashflow auditing, tax prep checks, and runway math.',
+    description: 'Multi-step cashflow auditing, tax prep checks and runway math.',
     icon: '⚡',
   },
   {
     id: 'ocr',
     label: 'Receipt Reader',
     badge: 'Doc Vision',
-    description: 'Clear visual reading of receipts, invoices, and bank statements.',
+    description: 'Clear visual reading of receipts, invoices and bank statements.',
     icon: '🔍',
   },
 ];
@@ -65,19 +66,28 @@ interface ChatAssistantProps {
 }
 
 const ChatAssistant: React.FC<ChatAssistantProps> = ({ initialVoiceMode = false }) => {
-  const { trackEngagement } = useFinMind();
+  const {
+    trackEngagement,
+    transactions,
+    invoices,
+    watchlist,
+    stockPortfolio,
+    goals,
+    currencySymbol,
+    applyAgentLedgerOperations,
+  } = useFinMind();
   const [messages, setMessages] = useState<ChatMessageExtended[]>([
     {
       id: '1',
       role: 'model',
-      text: "Hello, I am Liddy — your everyday personal finance advisor. Ask me to review your daily spending, categorize receipts, manage invoices, track investments, or analyze uploaded statements.",
+      text: "Hello, I am Liddy — your autonomous personal finance advisor. Ask me to review spending, cleanse duplicate or messy ledger entries, audit invoices, analyze your portfolio or answer live market questions.",
       timestamp: new Date()
     }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isVoiceMode, setIsVoiceMode] = useState(initialVoiceMode);
-  const [activeMode, setActiveMode] = useState<AgentMode>('chat');
+  const [activeMode, setActiveMode] = useState<AgentMode>('agent');
   const [isModeDropdownOpen, setIsModeDropdownOpen] = useState(false);
   const [attachment, setAttachment] = useState<AgentAttachment | null>(null);
 
@@ -146,6 +156,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ initialVoiceMode = false 
   const handleSendText = async (textToSend: string) => {
     const trimmed = textToSend.trim();
     if (!trimmed && !attachment) return;
+    if (!trackEngagement('AI Assistant')) return;
 
     const currentAttachment = attachment;
     const userMsg: ChatMessageExtended = { 
@@ -173,8 +184,29 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ initialVoiceMode = false 
         trimmed,
         activeMode,
         currentAttachment,
-        history
+        history,
+        {
+          currencySymbol,
+          transactions: transactions.slice(0, 180),
+          invoices: invoices.slice(0, 60),
+          watchlist: watchlist.slice(0, 30),
+          stockPortfolio,
+          goalsCount: goals.length,
+        }
       );
+
+      let appliedSummary: string | undefined;
+      if (result.ledgerOperations) {
+        const stats = applyAgentLedgerOperations(result.ledgerOperations);
+        const parts: string[] = [];
+        if (stats.added > 0) parts.push(`${stats.added} added`);
+        if (stats.updated > 0) parts.push(`${stats.updated} updated`);
+        if (stats.deleted > 0) parts.push(`${stats.deleted} removed`);
+        if (stats.settledInvoices > 0) parts.push(`${stats.settledInvoices} invoice settled`);
+        if (parts.length > 0) {
+          appliedSummary = `Applied to workspace ledger: ${parts.join(' · ')}`;
+        }
+      }
 
       const modelMsg: ChatMessageExtended = {
         id: (Date.now() + 1).toString(),
@@ -182,6 +214,8 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ initialVoiceMode = false 
         text: result.text,
         timestamp: new Date(),
         groundingUrls: result.groundingUrls,
+        activatedTools: result.activatedTools,
+        appliedSummary,
       };
 
       setMessages(prev => [...prev, modelMsg]);
@@ -190,7 +224,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ initialVoiceMode = false 
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
         role: 'model',
-        text: error?.message || "I encountered a communication issue while compiling your financial analysis. Please verify your connection or try again.",
+        text: "Sorry, I wasn't able to proceed with that request right now. Please try again in a moment.",
         timestamp: new Date()
       }]);
     } finally {
@@ -288,6 +322,21 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ initialVoiceMode = false 
                     <FormattedMessage text={msg.text} />
                   ) : (
                     <p className="whitespace-pre-wrap text-sm leading-relaxed font-normal">{msg.text}</p>
+                  )}
+
+                  {(msg.appliedSummary || (msg.activatedTools && msg.activatedTools.length > 0)) && (
+                    <div className="mt-3 pt-2.5 border-t border-neutral-100 dark:border-neutral-800 flex flex-wrap items-center gap-2 text-[11px]">
+                      {msg.appliedSummary && (
+                        <span className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/70 text-emerald-700 dark:text-emerald-300 font-semibold">
+                          {msg.appliedSummary}
+                        </span>
+                      )}
+                      {msg.activatedTools && msg.activatedTools.length > 0 && (
+                        <span className="px-2.5 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 font-mono">
+                          Skills: {msg.activatedTools.map((t) => t.replace(/_/g, ' ')).join(' · ')}
+                        </span>
+                      )}
+                    </div>
                   )}
                   
                   {msg.groundingUrls && msg.groundingUrls.length > 0 && (
@@ -388,7 +437,7 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ initialVoiceMode = false 
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                title="Attach photo, invoice, receipt, or financial doc"
+                title="Attach photo, invoice, receipt or financial doc"
                 aria-label="Upload document or photo"
                 className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-neutral-200/70 hover:bg-neutral-300 dark:bg-neutral-700/70 dark:hover:bg-neutral-600 text-neutral-700 dark:text-neutral-200 flex items-center justify-center transition-all shrink-0 cursor-pointer active:scale-95 group"
               >
@@ -466,12 +515,12 @@ const ChatAssistant: React.FC<ChatAssistantProps> = ({ initialVoiceMode = false 
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={
                   activeMode === 'web' 
-                    ? "Search live market figures, economic news, or stock symbols..." 
+                    ? "Search live market figures, economic news or stock symbols..." 
                     : activeMode === 'ocr' 
                     ? "Attach document or ask to parse financial statements..." 
                     : activeMode === 'agent' 
-                    ? "Command autonomous ratio analysis, DCF valuation, or balance sheet..." 
-                    : "Ask Liddy to audit transactions, run ratio analysis, or compute burn rate..."
+                    ? "Command autonomous ratio analysis, DCF valuation or balance sheet..." 
+                    : "Ask Liddy to audit transactions, run ratio analysis or compute burn rate..."
                 }
                 className="flex-1 bg-transparent px-2 sm:px-3 py-2 text-xs sm:text-sm text-neutral-900 dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none min-w-0"
               />

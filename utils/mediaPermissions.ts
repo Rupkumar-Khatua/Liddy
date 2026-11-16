@@ -79,7 +79,7 @@ export async function diagnoseMediaAccessFailure(
         title: `${label} Blocked by Preview Frame`,
         message:
           permissionState === 'granted'
-            ? `Your browser allows ${label.toLowerCase()} access, but the embedded preview container blocks hardware streams. Click "Open in Full Tab" below for direct access, or use file upload.`
+            ? `Your browser allows ${label.toLowerCase()} access, but the embedded preview container blocks hardware streams. Click "Open in Full Tab" below for direct access or use file upload.`
             : `${label} access is restricted inside this embedded frame. Click "Open in Full Tab" below or allow ${label.toLowerCase()} access in your browser bar.`,
       };
     }
@@ -89,7 +89,7 @@ export async function diagnoseMediaAccessFailure(
       isIframeBlocked: false,
       isUnsupported: false,
       title: `${label} Access Blocked`,
-      message: `Your browser blocked ${label.toLowerCase()} access for this site. Click the site-info icon beside the URL, set ${label} to Allow, and retry.`,
+      message: `Your browser blocked ${label.toLowerCase()} access for this site. Click the site-info icon beside the URL, set ${label} to Allow and retry.`,
     };
   }
 

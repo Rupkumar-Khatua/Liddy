@@ -166,7 +166,7 @@ export function buildPrintableInvoiceHtml(
                   <img src="${qrDataUrl}" alt="UPI QR" style="width:${isThermal ? '64px' : '82px'};height:${isThermal ? '64px' : '82px'};border:1px solid #e4e4e7;border-radius:6px;padding:3px;" />
                   <div style="font-size:10px;font-family:monospace;color:#52525b;">
                     <div><strong>UPI Pay</strong></div>
-                    <div>${esc(invoice.upiId || 'merchant@upi')}</div>
+                    <div>${esc(invoice.upiId || '')}</div>
                   </div>
                 </div>`
               : ''

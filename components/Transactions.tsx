@@ -39,6 +39,7 @@ const Transactions: React.FC<TransactionsProps> = ({ initialTab = 'LIST' }) => {
   const [appliedSearch, setAppliedSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedMethod, setSelectedMethod] = useState('All');
+  const [confirmPurgeAll, setConfirmPurgeAll] = useState(false);
 
   const handleSaveReceipt = (data: Partial<Transaction>) => {
     if (data.merchant && typeof data.amount === 'number') {
@@ -253,7 +254,7 @@ const Transactions: React.FC<TransactionsProps> = ({ initialTab = 'LIST' }) => {
                 type="text" 
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search by merchant, category, amount, or notes..." 
+                placeholder="Search by merchant, category, amount or notes..." 
                 className="w-full bg-neutral-50 dark:bg-neutral-800 hover:bg-neutral-100/60 focus:bg-white dark:focus:bg-neutral-900 pl-10 pr-8 py-2.5 rounded-xl border border-neutral-200/80 dark:border-neutral-700 focus:ring-2 focus:ring-indigo-500 text-xs font-medium outline-none transition-all text-neutral-900 dark:text-white" 
               />
               {searchQuery && (
@@ -303,17 +304,36 @@ const Transactions: React.FC<TransactionsProps> = ({ initialTab = 'LIST' }) => {
             </select>
 
             {transactions.length > 0 && (
-              <button
-                onClick={() => {
-                  if (confirm('Clear all recorded transactions and reset database to strictly 0.00?')) {
-                    clearAllTransactions();
-                  }
-                }}
-                className="px-3 py-2.5 text-neutral-400 hover:text-red-600 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200/80 dark:border-neutral-700 rounded-xl text-xs font-bold transition-all"
-                title="Reset all records to zero"
-              >
-                Purge All
-              </button>
+              confirmPurgeAll ? (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearAllTransactions();
+                      setConfirmPurgeAll(false);
+                    }}
+                    className="px-3 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Confirm Reset
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmPurgeAll(false)}
+                    className="px-2.5 py-2 bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl text-xs font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmPurgeAll(true)}
+                  className="px-3 py-2.5 text-neutral-500 hover:text-red-600 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200/80 dark:border-neutral-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  title="Reset all records to zero"
+                >
+                  Purge All
+                </button>
+              )
             )}
           </div>
         </div>
@@ -409,7 +429,7 @@ const Transactions: React.FC<TransactionsProps> = ({ initialTab = 'LIST' }) => {
               <div>
                 <h4 className="text-lg font-bold text-neutral-900 dark:text-white">No Expenses Recorded Yet</h4>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 leading-relaxed">
-                  Snap any paper or PDF receipt to log daily expenses automatically, or issue your first invoice.
+                  Snap any paper or PDF receipt to log daily expenses automatically or issue your first invoice.
                 </p>
               </div>
               <div className="flex items-center justify-center gap-3 pt-2">

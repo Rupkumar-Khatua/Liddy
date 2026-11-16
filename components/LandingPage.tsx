@@ -23,7 +23,7 @@ const FEATURE_STRIP_ITEMS: Array<{
     windowId: 'overview',
     title: 'Daily Money Overview',
     meta: 'Expenses · Stocks · Bills',
-    summary: 'See every personal expense, your connected stock broker balance, and pending invoices side by side.',
+    summary: 'See every personal expense, your connected stock broker balance and pending invoices side by side.',
     accentGradient: 'from-indigo-500 to-violet-500',
   },
   {
@@ -31,7 +31,7 @@ const FEATURE_STRIP_ITEMS: Array<{
     windowId: 'invoices',
     title: 'Multi-Format Invoicing',
     meta: 'A4 · Letter · 80mm POS',
-    summary: 'Three structured invoice templates, instant preview, print/PDF export, UPI QR, and email receipts.',
+    summary: 'Three structured invoice templates, instant preview, print/PDF export, UPI QR and email receipts.',
     accentGradient: 'from-emerald-500 to-teal-500',
   },
   {
@@ -39,7 +39,7 @@ const FEATURE_STRIP_ITEMS: Array<{
     windowId: 'scanner',
     title: 'Receipt Scanner',
     meta: 'Instant Expense Capture',
-    summary: 'Snap grocery, dining, utility, or travel receipts straight into your categorized spending ledger.',
+    summary: 'Snap grocery, dining, utility or travel receipts straight into your categorized spending ledger.',
     accentGradient: 'from-sky-500 to-cyan-500',
   },
   {
@@ -47,7 +47,7 @@ const FEATURE_STRIP_ITEMS: Array<{
     windowId: 'markets',
     title: 'Live Market & News Wire',
     meta: 'Global Streaming',
-    summary: 'Breaking financial headlines, interest rate updates, and live US & India stock market quotes.',
+    summary: 'Breaking financial headlines, interest rate updates and live US & India stock market quotes.',
     accentGradient: 'from-amber-500 to-orange-500',
   },
   {
@@ -55,7 +55,7 @@ const FEATURE_STRIP_ITEMS: Array<{
     windowId: 'agent',
     title: 'AI Finance Agent',
     meta: 'Personal Guide + Voice',
-    summary: 'Ask budgeting, stock, bill, or tax questions by chat or hands-free voice anytime.',
+    summary: 'Ask budgeting, stock, bill or tax questions by chat or hands-free voice anytime.',
     accentGradient: 'from-fuchsia-500 to-indigo-500',
   },
   {
@@ -63,14 +63,14 @@ const FEATURE_STRIP_ITEMS: Array<{
     windowId: 'vision',
     title: 'Vision Studio & Video',
     meta: 'Mind Map · Decks · Video',
-    summary: 'Host live video & screen-share rooms, map ideas together, and export PowerPoint, PDF, or Markdown.',
+    summary: 'Host live video & screen-share rooms, map ideas together and export PowerPoint, PDF or Markdown.',
     accentGradient: 'from-rose-500 to-pink-500',
   },
   {
     num: '07',
     windowId: 'pricing',
     title: 'Global & India Plans',
-    meta: 'UPI · Cards · Wallets',
+    meta: 'UPI · PayPal',
     summary: 'Start free forever or upgrade securely via verified multi-currency checkout with instant email receipts.',
     accentGradient: 'from-violet-500 to-purple-500',
   },
@@ -96,11 +96,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
             </p>
 
             <h1 className="text-4xl sm:text-5xl lg:text-[54px] font-extrabold tracking-tight leading-[1.06] text-neutral-900 dark:text-white">
-              One calm place for daily expenses, stock investments, and bills.
+              One calm place for daily expenses, stocks and bills.
             </h1>
 
             <p className="text-base sm:text-lg text-neutral-600 dark:text-neutral-300 leading-relaxed max-w-xl">
-              See exactly where you spent your money, track your connected stock broking balance, export formatted A4, Letter &amp; thermal invoices, follow live market news, and collaborate in HD video rooms.
+              Track everyday spending, follow live markets, issue ready-to-print invoices with UPI QR links and collaborate in live video rooms.
             </p>
 
             <div className="flex flex-wrap items-center gap-4 pt-2">
@@ -111,13 +111,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
               >
                 Open Daily Workspace &rarr;
               </button>
-              <button
-                type="button"
-                onClick={() => onNavigateWindow('invoices')}
-                className="px-5 py-3.5 rounded-2xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 hover:border-indigo-400 text-sm font-bold text-neutral-800 dark:text-neutral-200 transition-all cursor-pointer whitespace-nowrap shrink-0"
-              >
-                Create Invoice
-              </button>
             </div>
           </div>
 
@@ -126,7 +119,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
               {!heroImgFailed ? (
                 <img
                   src={STUDIO_MEDIA.heroFounderWorkspace}
-                  alt="Modern desk showing personal expenses, stock portfolio, invoices, and live market news"
+                  alt="Modern desk showing personal expenses, stock portfolio, invoices and live market news"
                   referrerPolicy="no-referrer"
                   onError={() => setHeroImgFailed(true)}
                   className="w-full h-full object-cover"
@@ -238,7 +231,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
               Everyday Financial Clarity
             </p>
             <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight">
-              Daily spending, stock wealth, and fast billing in one place.
+              Daily spending, stock wealth and fast billing in one place.
             </h2>
           </div>
 
@@ -256,10 +249,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
                   Invoicing &amp; UPI QR
                 </p>
                 <h3 className="text-2xl font-extrabold group-hover:text-indigo-600 dark:group-hover:text-sky-400 transition-colors">
-                  Print-Ready A4, Letter &amp; 80mm Invoices with Email Receipts
+                  Print-Ready Invoices with UPI QR &amp; Email Receipts
                 </h3>
                 <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed max-w-xl">
-                  Choose from Classic Editorial, Modern Minimal, or Corporate Tax templates, preview exact paper proportions before exporting PDF or HTML, embed UPI QR links, and send receipts directly via Gmail.
+                  Pick a layout, preview A4, Letter or thermal pages before exporting and let clients pay via your own UPI QR.
                 </p>
                 <span className="inline-block text-xs font-bold text-indigo-600 dark:text-sky-400 pt-1">
                   Open Invoices &rarr;
@@ -290,7 +283,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
                 <p className="text-xs font-mono text-sky-400">Live Wire &amp; Intelligence</p>
                 <h3 className="text-2xl font-extrabold">Global Financial News &amp; Market Wire</h3>
                 <p className="text-sm text-neutral-300 leading-relaxed">
-                  Stay ahead of earnings, central bank rate moves, macro news stories, and real-time S&amp;P 500, NASDAQ, NIFTY 50, and SENSEX tickers.
+                  Stay ahead of earnings, central bank rate moves, macro news stories and real-time S&amp;P 500, NASDAQ, NIFTY 50 and SENSEX tickers.
                 </p>
                 <span className="inline-block text-xs font-bold text-sky-400 pt-1">
                   Read Market News &rarr;
@@ -318,7 +311,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
               <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">Mind Map · PPTX · Video</p>
               <h3 className="text-xl font-extrabold">Creative Studio &amp; Live Video Rooms</h3>
               <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Brainstorm visual mind maps, export PPTX or PDF decks, and jump into live video, audio &amp; screen-share calls with anyone.
+                Brainstorm visual mind maps, export PPTX or PDF decks and jump into live video, audio &amp; screen-share calls with anyone.
               </p>
               <span className="inline-block text-xs font-bold text-indigo-600 dark:text-sky-400">
                 Launch Studio &rarr;
@@ -333,7 +326,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
               <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">Receipt AI</p>
               <h3 className="text-xl font-extrabold">Instant Expense Capture</h3>
               <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Snap or upload coffee, grocery, shopping, or travel receipts—AI logs every spend neatly into your daily ledger.
+                Snap or upload coffee, grocery, shopping or travel receipts—AI logs every spend neatly into your daily ledger.
               </p>
               <span className="inline-block text-xs font-bold text-indigo-600 dark:text-sky-400">
                 Open Scanner &rarr;
@@ -348,7 +341,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
               <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">AI Copilot</p>
               <h3 className="text-xl font-extrabold">AI Finance &amp; Voice Guide</h3>
               <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Review spending habits, analyze bank PDFs, plan savings targets, or speak naturally with integrated voice mode.
+                Review spending habits, analyze bank PDFs, plan savings targets or speak naturally with integrated voice mode.
               </p>
               <span className="inline-block text-xs font-bold text-indigo-600 dark:text-sky-400">
                 Ask AI Agent &rarr;
@@ -367,7 +360,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
           <div className="lg:col-span-5 glass-card dark:bg-neutral-900/90 border border-neutral-200/80 dark:border-neutral-800 rounded-3xl p-7 flex flex-col justify-between gap-6">
             <p className="text-lg sm:text-xl font-semibold leading-snug text-neutral-900 dark:text-white">
-              “Finally one clean dashboard that shows my daily expenses, Zerodha portfolio balance, and pending bills without switching between five confusing finance apps.”
+              “Finally one clean dashboard that shows my daily expenses, Zerodha portfolio balance and pending bills without switching between five confusing finance apps.”
             </p>
             <div className="flex items-center gap-4 pt-4 border-t border-neutral-200/70 dark:border-neutral-800">
               {!avatarImgFailed ? (
@@ -395,14 +388,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
           <div className="lg:col-span-7 rounded-3xl bg-neutral-950 text-white border border-white/10 p-7 flex flex-col justify-between gap-6">
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs font-mono text-sky-400">
-                <span>India UPI + International Cards</span>
+                <span>India UPI + International PayPal</span>
                 <span>Current Plan: {planTier.toUpperCase()}</span>
               </div>
               <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-                Start Free Forever. Upgrade with Verified UPI, Cards, or Wallets.
+                Start Free Forever. Upgrade with Verified UPI or PayPal.
               </h3>
               <p className="text-sm text-neutral-300 leading-relaxed">
-                Starter Free includes personal expense tracking, stock broker balance updates, 10 invoices/month, and live market news. Liddy Pro ($12/mo or &#8377;999/mo) unlocks unlimited invoices, Gmail receipts, PPTX/PDF exports, and zero ads.
+                Starter Free includes personal expense tracking, stock broker balance updates, 10 invoices/month and live market news. Liddy Pro ($12/mo or &#8377;999/mo) unlocks unlimited invoices, Gmail receipts, PPTX/PDF exports and zero ads.
               </p>
             </div>
 
@@ -455,7 +448,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
                 Who is Liddy built for?
               </dt>
               <dd className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Liddy is a general-purpose daily financial companion built for everyone—track everyday expenses, update your stock broking portfolio, manage A4/Letter/thermal invoices, follow live financial news, and collaborate with teams or family.
+                Liddy is a general-purpose daily financial companion built for everyone—track everyday expenses, update your stock broking portfolio, manage A4/Letter/thermal invoices, follow live financial news and collaborate with teams or family.
               </dd>
             </div>
 
@@ -464,7 +457,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
                 How does the connected stock portfolio card work?
               </dt>
               <dd className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Select your stock broking app (such as Zerodha Kite, Groww, Upstox, Robinhood, or Fidelity), log your stock holdings or total portfolio balance, and track your unrealized gains right next to your daily spending.
+                Select your stock broking app (such as Zerodha Kite, Groww, Upstox, Robinhood or Fidelity), log your stock holdings or total portfolio balance and track your unrealized gains right next to your daily spending.
               </dd>
             </div>
 
@@ -473,7 +466,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
                 Which payment methods and receipts are supported?
               </dt>
               <dd className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Checkout verifies payments across India (UPI QR, UPI ID, and RuPay/Cards) and International options (Visa, Mastercard, Amex, Apple Pay, and Google Pay) and delivers a formatted invoice via Gmail or downloadable receipt.
+                Checkout verifies payments across India via UPI (UPI QR &amp; UPI ID) and International regions via PayPal and delivers a formatted invoice via Gmail or downloadable receipt.
               </dd>
             </div>
 
@@ -482,7 +475,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
                 What can teams do inside the Creative Studio?
               </dt>
               <dd className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Create interactive mind maps, author slide presentations exported to PowerPoint, PDF, or Markdown, and connect face-to-face inside live HD video, voice, and screen-share conference rooms.
+                Create interactive mind maps, author slide presentations exported to PowerPoint, PDF or Markdown and connect face-to-face inside live HD video, voice and screen-share conference rooms.
               </dd>
             </div>
           </dl>

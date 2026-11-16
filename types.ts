@@ -23,7 +23,7 @@ export type PlanTier = 'free' | 'pro' | 'team';
 
 export type BillingCycle = 'monthly' | 'annual';
 export type PaymentRegion = 'IN' | 'INTL';
-export type PaymentRail = 'UPI_QR' | 'UPI_ID' | 'CARD' | 'WALLET';
+export type PaymentRail = 'UPI_QR' | 'UPI_ID' | 'PAYPAL';
 
 export interface HyperswitchPaymentRecord {
   paymentId: string;
@@ -36,11 +36,74 @@ export interface HyperswitchPaymentRecord {
   currency: 'INR' | 'USD' | 'EUR' | 'GBP';
   amount: number;
   amountUsdEquivalent: number;
-  paymentRail: PaymentRail;
+  paymentRail: PaymentRail | 'CARD' | 'WALLET';
   connector: string;
   status: 'succeeded' | 'processing' | 'requires_action' | 'failed';
   referenceCode: string;
   createdAt: string;
+}
+
+export interface MerchantPayoutConfig {
+  upiId: string;
+  payeeName: string;
+  bankName?: string;
+  accountHolder?: string;
+  accountNumber?: string;
+  ifscCode?: string;
+  paypalEnabled?: boolean;
+  paypalEnvironment?: 'sandbox' | 'live';
+  paypalClientId?: string;
+  paypalClientSecret?: string;
+  paypalMerchantEmail?: string;
+  hasPaypalConfigured?: boolean;
+  updatedAt?: string;
+}
+
+export type VisualStylePreset =
+  | 'auto'
+  | 'photorealistic'
+  | 'cinematic'
+  | 'editorial_3d'
+  | 'illustration'
+  | 'watercolor';
+
+export type VisualAspectRatio = '16:9' | '1:1' | '4:3' | '9:16';
+
+export interface AiImageConfig {
+  aiHordeEnabled: boolean;
+  aiHordeApiKey?: string;
+  hasAiHordeKey?: boolean;
+  cloudflareEnabled: boolean;
+  cloudflareAccountId?: string;
+  cloudflareApiToken?: string;
+  hasCloudflareConfigured?: boolean;
+  huggingfaceEnabled: boolean;
+  huggingfaceToken?: string;
+  hasHuggingfaceConfigured?: boolean;
+  queueTimeoutSec: number;
+  activeTurboMode?: boolean;
+  updatedAt?: string;
+}
+
+export interface ImageRenderJobState {
+  jobId: string;
+  status: 'queued' | 'processing' | 'fallback' | 'completed' | 'failed' | 'cancelled';
+  provider: string;
+  model?: string;
+  stageLabel: string;
+  queuePosition?: number | null;
+  waitTimeSec?: number | null;
+  progressPercent: number;
+  elapsedSec: number;
+  result?: {
+    imageUrl: string;
+    format: 'raster' | 'vector-fallback';
+    mode: 'ai-raster' | 'ai-vector-fallback' | 'offline-vector-fallback';
+    statusMessage: string;
+    provider: string;
+    model?: string;
+  };
+  error?: string;
 }
 
 export interface StockHolding {
@@ -106,6 +169,16 @@ export interface CollabParticipant {
   micOn?: boolean;
   camOn?: boolean;
   screenOn?: boolean;
+  handRaised?: boolean;
+}
+
+export interface CollabChatMessage {
+  id: string;
+  clientId: string;
+  senderName: string;
+  senderColor: string;
+  text: string;
+  createdAt: string;
 }
 
 export interface IdeationBoardRecord {
@@ -176,6 +249,22 @@ export interface Transaction {
   notes?: string;
 }
 
+export interface FinancialContextSnapshot {
+  currencySymbol: string;
+  transactions: Transaction[];
+  invoices: Invoice[];
+  watchlist: string[];
+  stockPortfolio: StockPortfolioState;
+  goalsCount: number;
+}
+
+export interface AgentLedgerOperations {
+  addTransactions?: Array<Omit<Transaction, 'id' | 'status'> & { status?: 'completed' | 'pending' }>;
+  updateTransactions?: Array<{ id: string; updates: Partial<Transaction> }>;
+  deleteTransactionIds?: string[];
+  markInvoicesPaid?: Array<{ id: string; paymentMethod?: string; upiReference?: string }>;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'model';
@@ -183,6 +272,8 @@ export interface ChatMessage {
   timestamp: Date;
   images?: string[];
   groundingUrls?: Array<{title: string, uri: string}>;
+  activatedTools?: string[];
+  appliedSummary?: string;
 }
 
 export interface Goal {
