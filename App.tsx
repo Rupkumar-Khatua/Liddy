@@ -14,39 +14,35 @@ import AdminAnalyticsPortal from './components/AdminAnalyticsPortal';
 import { LaunchScreen } from './components/LaunchScreen';
 import { FinMindProvider, useFinMind } from './context/FinMindContext';
 import { WindowId } from './types';
-import { WINDOW_ROUTES, parsePathToWindow, windowToPath, parseRoomCodeFromSearch } from './utils/router';
-
-function syncDocumentSeo(windowId: WindowId) {
-  const meta = WINDOW_ROUTES[windowId] || WINDOW_ROUTES.home;
-  document.title = meta.title;
-
-  const setMetaTag = (selector: string, content: string) => {
-    const el = document.querySelector(selector);
-    if (el) el.setAttribute('content', content);
-  };
-
-  setMetaTag('meta[name="description"]', meta.description);
-  setMetaTag('meta[property="og:title"]', meta.title);
-  setMetaTag('meta[property="og:description"]', meta.description);
-  setMetaTag('meta[name="twitter:title"]', meta.title);
-  setMetaTag('meta[name="twitter:description"]', meta.description);
-
-  const canonical = document.querySelector('link[rel="canonical"]');
-  if (canonical) {
-    canonical.setAttribute('href', `${window.location.origin}${meta.path}`);
-  }
-}
+import {
+  parsePathToWindow,
+  windowToPath,
+  parseRoomCodeFromLocation,
+  parseRegionFromPath,
+  stripRegionPrefix,
+  getWindowRouteMeta,
+  syncDocumentSeo,
+} from './utils/router';
 
 const AppContent: React.FC = () => {
-  const [showLaunchScreen, setShowLaunchScreen] = useState(true);
+  const [showLaunchScreen, setShowLaunchScreen] = useState<boolean>(() =>
+    !(
+      typeof window !== 'undefined' &&
+      Boolean(parseRoomCodeFromLocation(window.location.pathname, window.location.search, window.location.hash))
+    )
+  );
   const [activeWindow, setActiveWindow] = useState<WindowId>(() =>
-    typeof window !== 'undefined' ? parsePathToWindow(window.location.pathname) : 'home'
+    typeof window !== 'undefined'
+      ? parsePathToWindow(window.location.pathname, window.location.search, window.location.hash)
+      : 'home'
   );
   const [visionRoomCode, setVisionRoomCode] = useState<string | null>(() =>
-    typeof window !== 'undefined' ? parseRoomCodeFromSearch(window.location.search) : null
+    typeof window !== 'undefined'
+      ? parseRoomCodeFromLocation(window.location.pathname, window.location.search, window.location.hash)
+      : null
   );
   const [launchVoiceInsideAgent] = useState<boolean>(() =>
-    typeof window !== 'undefined' && window.location.pathname.replace(/\/+$/, '') === '/workspace/voice'
+    typeof window !== 'undefined' && stripRegionPrefix(window.location.pathname).replace(/\/+$/, '') === '/workspace/voice'
   );
 
   const {
@@ -60,6 +56,11 @@ const AppContent: React.FC = () => {
     closeUpgradeModal,
     planTier,
     isAdminUser,
+    paymentRegion,
+    setPaymentRegion,
+    accountAccessStatus,
+    accountAccessReason,
+    clearAccountAccessNotice,
     logAnalyticsEvent,
   } = useFinMind();
 
@@ -71,26 +72,35 @@ const AppContent: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    syncDocumentSeo(activeWindow);
+    syncDocumentSeo(activeWindow, paymentRegion);
+    const meta = getWindowRouteMeta(activeWindow, paymentRegion);
+    const canonical = document.querySelector('link[rel="canonical"]');
+    if (canonical) {
+      canonical.setAttribute('href', `${window.location.origin}${meta.path}`);
+    }
     logAnalyticsEvent('feature_view', activeWindow);
-  }, [activeWindow, logAnalyticsEvent]);
+  }, [activeWindow, paymentRegion, logAnalyticsEvent]);
 
   useEffect(() => {
     const onPopState = () => {
-      const next = parsePathToWindow(window.location.pathname);
+      const pathRegion = parseRegionFromPath(window.location.pathname);
+      if (pathRegion) {
+        setPaymentRegion(pathRegion, false);
+      }
+      const next = parsePathToWindow(window.location.pathname, window.location.search, window.location.hash);
       setActiveWindow(next);
-      setVisionRoomCode(next === 'vision' ? parseRoomCodeFromSearch(window.location.search) : null);
+      setVisionRoomCode(
+        next === 'vision'
+          ? parseRoomCodeFromLocation(window.location.pathname, window.location.search, window.location.hash)
+          : null
+      );
+      document.body.style.overflow = '';
+      document.documentElement.style.overflow = '';
       window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, []);
-
-  useEffect(() => {
-    if (isGuestLocked && activeWindow !== 'home' && activeWindow !== 'admin' && !isAuthModalOpen) {
-      openAuthModal('Guest trial limit reached — Create a free account to continue');
-    }
-  }, [isGuestLocked, activeWindow, isAuthModalOpen, openAuthModal]);
+  }, [setPaymentRegion]);
 
   useEffect(() => {
     const cleanupBadElements = () => {
@@ -111,25 +121,29 @@ const AppContent: React.FC = () => {
   }, []);
 
   const navigateToWindow = useCallback((windowId: WindowId) => {
-    const nextPath = windowToPath(windowId);
+    document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
+    const nextPath = windowToPath(windowId, paymentRegion);
     if (window.location.pathname !== nextPath || (windowId !== 'vision' && window.location.search)) {
-      window.history.pushState({ windowId }, '', nextPath);
+      window.history.pushState({ windowId, region: paymentRegion }, '', nextPath);
     }
     if (windowId !== 'vision') {
       setVisionRoomCode(null);
     }
     setActiveWindow(windowId);
     window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
-  }, []);
+  }, [paymentRegion]);
 
   const renderWorkspace = () => {
     switch (activeWindow) {
       case 'overview':
         return <Dashboard onNavigateWindow={navigateToWindow} />;
+      case 'expenses':
+        return <Transactions key="section-expenses" initialTab="LIST" />;
       case 'invoices':
         return <Transactions key="section-invoices" initialTab="INVOICE" />;
       case 'scanner':
-        return <Transactions key="section-scanner" initialTab="SCAN" />;
+        return <Transactions key="section-scanner" initialTab="INVOICE" initialInvoiceView="SCAN_BILL" />;
       case 'markets':
         return <Markets />;
       case 'agent':
@@ -145,9 +159,10 @@ const AppContent: React.FC = () => {
             onRoomCodeChange={(code) => {
               setVisionRoomCode(code);
               if (activeWindow === 'vision' && code) {
-                const targetUrl = `${windowToPath('vision')}?room=${encodeURIComponent(code)}`;
+                const basePath = windowToPath('vision', paymentRegion);
+                const targetUrl = `${basePath}?room=${encodeURIComponent(code)}`;
                 if (`${window.location.pathname}${window.location.search}` !== targetUrl) {
-                  window.history.replaceState({ windowId: 'vision', room: code }, '', targetUrl);
+                  window.history.replaceState({ windowId: 'vision', room: code, region: paymentRegion }, '', targetUrl);
                 }
               }
             }}
@@ -177,6 +192,52 @@ const AppContent: React.FC = () => {
     }
   };
 
+  if (accountAccessStatus === 'blocked') {
+    return (
+      <div className="min-h-screen w-full bg-[#06070B] text-white flex items-center justify-center p-6 font-sans">
+        <div className="max-w-md w-full rounded-3xl bg-neutral-900 border border-rose-500/30 p-8 space-y-6 text-center shadow-2xl">
+          <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-400 mx-auto flex items-center justify-center font-mono text-lg font-bold">
+            !
+          </div>
+          <div className="space-y-2">
+            <p className="text-xs font-mono uppercase tracking-[0.18em] text-rose-400 font-semibold">
+              Access Restricted
+            </p>
+            <h1 className="text-2xl font-extrabold tracking-tight text-white">
+              Account Blocked
+            </h1>
+            <p className="text-sm text-neutral-300 leading-relaxed">
+              {accountAccessReason || 'Your account has been blocked from using Liddy by the platform administrator.'}
+            </p>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                clearAccountAccessNotice();
+                openAuthModal('Sign in with another account');
+              }}
+              className="flex-1 py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer transition-colors whitespace-nowrap"
+            >
+              Use Another Account
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                clearAccountAccessNotice();
+                navigateToWindow('home');
+              }}
+              className="flex-1 py-3 px-4 rounded-2xl bg-white/10 hover:bg-white/15 text-neutral-200 text-xs font-bold cursor-pointer transition-colors whitespace-nowrap"
+            >
+              Return Home
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen w-full bg-[#F6F6F4] dark:bg-[#09090B] text-neutral-900 dark:text-neutral-100 font-sans selection:bg-indigo-600 selection:text-white relative transition-colors duration-200 overflow-x-clip">
       {showLaunchScreen && (
@@ -200,10 +261,10 @@ const AppContent: React.FC = () => {
         </FullScreenWindowShell>
       )}
 
-      {(isAuthModalOpen || (isGuestLocked && activeWindow !== 'home' && activeWindow !== 'admin')) && (
+      {isAuthModalOpen && (
         <Login
           isModal={true}
-          forceLock={isGuestLocked && activeWindow !== 'home' && activeWindow !== 'admin'}
+          forceLock={false}
           featureReason={
             authModalReason ||
             (isGuestLocked ? 'Your guest preview has ended — Create a free account to continue' : undefined)
@@ -223,8 +284,13 @@ const AppContent: React.FC = () => {
         !isAuthModalOpen &&
         activeWindow !== 'pricing' &&
         activeWindow !== 'admin' && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-md animate-enter overflow-y-auto">
-            <div className="relative w-full max-w-5xl rounded-3xl bg-[#F6F6F4] dark:bg-[#0B0C11] border border-neutral-200 dark:border-white/10 shadow-2xl p-5 sm:p-8 my-auto max-h-[92vh] overflow-y-auto">
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-neutral-950/40 dark:bg-black/65 backdrop-blur-sm overflow-y-auto"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) closeUpgradeModal();
+            }}
+          >
+            <div className="relative w-full max-w-5xl rounded-3xl bg-[#F6F6F4] dark:bg-[#0B0C11] border border-neutral-200 dark:border-white/10 shadow-2xl p-5 sm:p-8 my-auto max-h-[92vh] overflow-y-auto animate-enter">
               <button
                 type="button"
                 onClick={closeUpgradeModal}

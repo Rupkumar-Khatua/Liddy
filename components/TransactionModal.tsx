@@ -10,7 +10,7 @@ interface TransactionModalProps {
 }
 
 const TransactionModal: React.FC<TransactionModalProps> = ({ transaction, onClose, onUpdate }) => {
-  const { deleteTransaction, currencySymbol } = useFinMind();
+  const { deleteTransaction, currencySymbol, paymentRegion } = useFinMind();
   const [formData, setFormData] = useState(transaction);
 
   // Lock body scroll when modal is active
@@ -42,9 +42,9 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ transaction, onClos
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-enter overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-neutral-950/45 dark:bg-black/65 backdrop-blur-sm overflow-y-auto" onClick={onClose}>
       <div 
-        className="bg-white dark:bg-[#121215] text-neutral-900 dark:text-white rounded-[32px] p-8 w-full max-w-md shadow-2xl border border-neutral-200/80 dark:border-neutral-800 my-auto"
+        className="bg-white dark:bg-[#121215] text-neutral-900 dark:text-white rounded-[32px] p-8 w-full max-w-md shadow-2xl border border-neutral-200/80 dark:border-neutral-800 my-auto animate-enter"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-6">
@@ -111,7 +111,7 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ transaction, onClos
               name="notes"
               value={formData.notes || ''}
               onChange={handleChange}
-              placeholder="UPI ref, bill number, etc."
+              placeholder={paymentRegion === 'IN' ? 'UPI ref, bill number, etc.' : 'PayPal transaction ID, bill number, etc.'}
               className="w-full bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl px-4 py-3 font-medium text-neutral-900 dark:text-white focus:ring-2 focus:ring-indigo-500 text-xs outline-none"
             />
           </div>

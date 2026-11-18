@@ -34,6 +34,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
     setReducedMotion,
     currentLanguage,
     setLanguage,
+    paymentRegion,
   } = useFinMind();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>('APPEARANCE');
@@ -146,7 +147,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
   const cardBody = (
       <div
         className={`bg-white dark:bg-[#121215] text-neutral-900 dark:text-neutral-100 rounded-[28px] w-full border border-neutral-200/80 dark:border-neutral-800 flex flex-col overflow-hidden ${
-          isFullScreen ? 'shadow-xs min-h-[75vh]' : 'max-w-4xl shadow-2xl max-h-[92vh] my-auto'
+          isFullScreen ? 'shadow-xs min-h-[75vh]' : 'max-w-4xl shadow-2xl max-h-[92vh] my-auto animate-enter'
         }`}
         role={isFullScreen ? undefined : 'dialog'}
         aria-modal={isFullScreen ? undefined : true}
@@ -248,7 +249,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                       Currency Sign Format
                     </label>
                     <p className="text-xs text-neutral-400 mt-0.5">
-                      Select your preferred currency symbol. UPI invoices always enforce the ₹ sign.
+                      {paymentRegion === 'IN'
+                        ? 'Select your preferred currency symbol. UPI invoices always enforce the ₹ sign.'
+                        : 'Select your preferred currency symbol. International invoices settle cleanly in USD ($).'}
                     </p>
                   </div>
                   <button
@@ -645,7 +648,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                 {[
                   { id: 'OVERVIEW' as const, label: 'Overview & Fiduciary' },
                   { id: 'EU' as const, label: 'EU (GDPR & DORA)' },
-                  { id: 'INDIA' as const, label: 'India (DPDP & RBI)' },
+                  ...(paymentRegion === 'IN' ? [{ id: 'INDIA' as const, label: 'India (DPDP & RBI)' }] : []),
                   { id: 'US' as const, label: 'US (CCPA & GLBA)' },
                   { id: 'APAC' as const, label: 'APAC (APPI & PDPA)' },
                   { id: 'TERMS' as const, label: 'Terms & Conditions' },
@@ -670,7 +673,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                   <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200">
                     <div className="font-bold text-sm mb-1">🛡️ Sovereign Custody Guarantee</div>
                     <p>
-                      The Liddy platform operates on a strict non-custodial, client-partitioned architecture. Your transactional records, invoices, itemized bills and UPI keys remain under your sovereign control. We do not sell personal telemetry, license spending behavior to brokers or train public AI models on your customer receipts.
+                      {paymentRegion === 'IN'
+                        ? 'The Liddy platform operates on a strict non-custodial, client-partitioned architecture. Your transactional records, invoices, itemized bills and UPI keys remain under your sovereign control. We do not sell personal telemetry, license spending behavior to brokers or train public AI models on your customer receipts.'
+                        : 'The Liddy platform operates on a strict non-custodial, client-partitioned architecture. Your transactional records, invoices, itemized bills and settlement references remain under your sovereign control. We do not sell personal telemetry, license spending behavior to brokers or train public AI models on your customer receipts.'}
                     </p>
                   </div>
 
@@ -681,8 +686,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                     </div>
 
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
-                      <div className="font-bold text-neutral-900 dark:text-white mb-1">Open UPI Sandboxing</div>
-                      <p className="text-neutral-500 dark:text-neutral-400">Dynamic QR codes are generated client-side following NPCI standards. Banking MPINs and authentication credentials never touch external proxy servers.</p>
+                      <div className="font-bold text-neutral-900 dark:text-white mb-1">
+                        {paymentRegion === 'IN' ? 'Open UPI Sandboxing' : 'Verified PayPal Settlement'}
+                      </div>
+                      <p className="text-neutral-500 dark:text-neutral-400">
+                        {paymentRegion === 'IN'
+                          ? 'Dynamic QR codes are generated client-side following NPCI standards. Banking MPINs and authentication credentials never touch external proxy servers.'
+                          : 'Invoice payment links route cleanly through encrypted PayPal checkout flows. Card and banking credentials never touch Liddy servers.'}
+                      </p>
                     </div>
 
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
@@ -734,7 +745,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
               )}
 
               {/* 3. INDIA (DPDP ACT 2023 & RBI/NPCI) */}
-              {complianceRegion === 'INDIA' && (
+              {complianceRegion === 'INDIA' && paymentRegion === 'IN' && (
                 <div className="space-y-4 animate-enter">
                   <div className="p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                     <div className="flex items-center gap-2 mb-2">
@@ -862,7 +873,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                     <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                       <div className="font-bold text-neutral-900 dark:text-white mb-1">2. Non-Custodial Open Payments & Invoicing</div>
                       <p className="text-neutral-500 dark:text-neutral-400">
-                        Liddy provides software tools to compile digital invoices and generate standard UPI protocol strings. Liddy is not a licensed payment gateway, bank or escrow depository. All transaction settlements execute strictly between your financial institution and your counterparty.
+                        {paymentRegion === 'IN'
+                          ? 'Liddy provides software tools to compile digital invoices and generate standard UPI protocol strings. Liddy is not a licensed payment gateway, bank or escrow depository. All transaction settlements execute strictly between your financial institution and your counterparty.'
+                          : 'Liddy provides software tools to compile digital invoices and generate verified PayPal payment links. Liddy is not a licensed payment gateway, bank or escrow depository. All transaction settlements execute strictly between PayPal and your counterparty.'}
                       </p>
                     </div>
 
@@ -905,8 +918,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
                     <p className="text-neutral-500 dark:text-neutral-400">No mock companies, fake spending or pre-filled shopping runs. Telemetry begins at 0.00 until you record genuine activity.</p>
                   </div>
                   <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
-                    <div className="font-bold text-neutral-900 dark:text-white mb-1">Open UPI & Standard Billing</div>
-                    <p className="text-neutral-500 dark:text-neutral-400">Native dynamic QR generation with standard VPA interoperability, industry templates and automatic settlement reconciliation.</p>
+                    <div className="font-bold text-neutral-900 dark:text-white mb-1">
+                      {paymentRegion === 'IN' ? 'Open UPI & Standard Billing' : 'Global PayPal & Standard Billing'}
+                    </div>
+                    <p className="text-neutral-500 dark:text-neutral-400">
+                      {paymentRegion === 'IN'
+                        ? 'Native dynamic QR generation with standard VPA interoperability, industry templates and automatic settlement reconciliation.'
+                        : 'Native PayPal checkout links with international USD formatting, Swiss templates and automatic settlement reconciliation.'}
+                    </p>
                   </div>
                   <div className="p-4 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800">
                     <div className="font-bold text-neutral-900 dark:text-white mb-1">Global Exchange Registry</div>
@@ -947,7 +966,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, i
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-3 md:p-6 bg-black/80 backdrop-blur-md animate-enter overflow-y-auto"
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-3 md:p-6 bg-neutral-950/45 dark:bg-black/65 backdrop-blur-sm overflow-y-auto"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

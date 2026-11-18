@@ -8,9 +8,10 @@ interface TopNavbarProps {
 }
 
 const PRIMARY_NAV_LINKS: Array<{ id: WindowId; label: string }> = [
-  { id: 'overview', label: 'Workspace' },
+  { id: 'overview', label: 'Overview' },
+  { id: 'expenses', label: 'Expenses' },
   { id: 'invoices', label: 'Invoices' },
-  { id: 'markets', label: 'News & Markets' },
+  { id: 'markets', label: 'Markets' },
   { id: 'vision', label: 'Vision Studio' },
   { id: 'pricing', label: 'Pricing' },
 ];
@@ -51,8 +52,8 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onNavigateWindow }) => {
             ))}
           </nav>
 
-          {/* Theme + Settings + Primary CTA */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          {/* Theme + Primary CTA */}
+          <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={toggleTheme}
@@ -104,10 +105,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onNavigateWindow }) => {
               {(
                 [
                   { id: 'overview', label: 'Daily Overview' },
-                  { id: 'invoices', label: 'Invoices & UPI' },
-                  { id: 'scanner', label: 'Expense AI' },
+                  { id: 'expenses', label: 'Personal Expenses' },
+                  { id: 'invoices', label: 'Invoices & Bill OCR' },
                   { id: 'markets', label: 'News & Markets' },
-                  { id: 'agent', label: 'AI Finance Agent' },
+                  { id: 'agent', label: 'Liddy AI' },
                   { id: 'vision', label: 'Vision Studio' },
                   { id: 'pricing', label: 'Pricing' },
                 ] as Array<{ id: WindowId; label: string }>

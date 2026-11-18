@@ -92,6 +92,27 @@ export const Login: React.FC<LoginProps> = ({
     }
   }, [isModal, isHardLocked]);
 
+  const verifyUserAccessStatus = async (fbUser: any): Promise<boolean> => {
+    try {
+      const token = await fbUser?.getIdToken?.().catch(() => '');
+      const params = new URLSearchParams();
+      if (fbUser?.uid) params.set('uid', fbUser.uid);
+      if (fbUser?.email) params.set('email', fbUser.email);
+      const resp = await fetch(`/api/access/status?${params.toString()}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (resp.ok) {
+        const access = await resp.json();
+        if (access?.status === 'blocked') {
+          await logoutUser();
+          setErrorMsg(access.reason || 'Your account has been blocked by the platform administrator.');
+          return false;
+        }
+      }
+    } catch {}
+    return true;
+  };
+
   const handleGoogleSignIn = async () => {
     setIsLoading(true);
     setErrorMsg(null);
@@ -99,6 +120,8 @@ export const Login: React.FC<LoginProps> = ({
     try {
       const user = await signInWithGoogle();
       if (user) {
+        const allowed = await verifyUserAccessStatus(user);
+        if (!allowed) return;
         const mappedUser: LiddyUser = {
           displayName: user.displayName || user.email?.split('@')[0] || 'Member',
           email: user.email || '',
@@ -199,6 +222,8 @@ export const Login: React.FC<LoginProps> = ({
 
         try {
           const newUser = await signUpWithEmail(trimmedEmail, password, name.trim());
+          const allowed = await verifyUserAccessStatus(newUser);
+          if (!allowed) return;
           const mappedUser: LiddyUser = {
             displayName: name.trim() || newUser?.displayName || trimmedEmail.split('@')[0],
             email: newUser?.email || trimmedEmail,
@@ -219,6 +244,8 @@ export const Login: React.FC<LoginProps> = ({
       } else {
         try {
           const signedIn = await signInWithEmail(trimmedEmail, password);
+          const allowed = await verifyUserAccessStatus(signedIn);
+          if (!allowed) return;
           const mappedUser: LiddyUser = {
             displayName: signedIn?.displayName || trimmedEmail.split('@')[0],
             email: signedIn?.email || trimmedEmail,
@@ -256,7 +283,7 @@ export const Login: React.FC<LoginProps> = ({
     <div 
       className={
         isModal 
-          ? 'fixed inset-0 z-[999999] bg-black/85 backdrop-blur-xl flex items-center justify-center p-3 sm:p-6 overflow-y-auto font-sans antialiased' 
+          ? 'fixed inset-0 z-[999999] bg-neutral-950/45 dark:bg-black/65 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto font-sans antialiased' 
           : 'min-h-screen w-full bg-[#FAF9F6] dark:bg-neutral-950 flex items-center justify-center p-3 sm:p-6 font-sans antialiased'
       }
       style={

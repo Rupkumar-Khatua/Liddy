@@ -69,7 +69,11 @@
         },
         "planTier": {
           "type": "string",
-          "enum": ["free", "pro", "team"]
+          "enum": ["free", "day", "pro", "team"]
+        },
+        "planExpiresAt": {
+          "type": "string",
+          "maxLength": 64
         },
         "adFree": {
           "type": "boolean"
@@ -120,7 +124,7 @@
         },
         "paymentMethod": {
           "type": "string",
-          "enum": ["UPI", "CARD", "CASH", "SCAN_RECEIPT", "INVOICE"]
+          "enum": ["UPI", "CARD", "CASH", "SCAN_RECEIPT", "INVOICE", "PAYPAL"]
         },
         "invoiceId": {
           "type": "string",
@@ -205,7 +209,7 @@
         },
         "templateStyle": {
           "type": "string",
-          "enum": ["classic", "minimal", "corporate"]
+          "enum": ["swiss", "classic", "minimal", "corporate", "executive"]
         },
         "paperFormat": {
           "type": "string",
@@ -242,6 +246,14 @@
         "payeeName": {
           "type": "string",
           "maxLength": 120
+        },
+        "paypalId": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "paymentRegion": {
+          "type": "string",
+          "enum": ["IN", "INTL"]
         },
         "paymentStatus": {
           "type": "string",
@@ -460,11 +472,11 @@
         },
         "planTier": {
           "type": "string",
-          "enum": ["free", "pro", "team"]
+          "enum": ["free", "day", "pro", "team"]
         },
         "billingCycle": {
           "type": "string",
-          "enum": ["monthly", "annual"]
+          "enum": ["daily", "monthly", "annual"]
         },
         "region": {
           "type": "string",
@@ -810,6 +822,246 @@
         }
       },
       "required": ["userId", "upiId", "payeeName", "updatedAt"]
+    },
+    "UserAccessControl": {
+      "title": "UserAccessControl",
+      "description": "Administrator-managed account block and session revocation record",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 254
+        },
+        "displayName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "revoked", "blocked"]
+        },
+        "revokedAfterMs": {
+          "type": "number"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "status", "revokedAfterMs", "updatedBy", "updatedAt"]
+    },
+    "ChatSession": {
+      "title": "ChatSession",
+      "description": "User-scoped Liddy AI conversation session synced across devices",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["chat", "agent", "ocr", "web"]
+        },
+        "preview": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "messages": {
+          "type": "array",
+          "description": "Ordered conversation messages including inline analytics, CSV, and PDF report specs"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["sessionId", "userId", "title", "mode", "messages", "createdAt", "updatedAt"]
+    },
+    "AiSkill": {
+      "title": "AiSkill",
+      "description": "User-installed or custom-authored SKILL.md financial capability synced across sessions",
+      "type": "object",
+      "properties": {
+        "skillId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "source": {
+          "type": "string",
+          "enum": ["builtin", "skills.sh", "custom"]
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "triggers": {
+          "type": "string",
+          "maxLength": 240
+        },
+        "instructionsMarkdown": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000
+        },
+        "author": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "repo": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "installs": {
+          "type": "number"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["skillId", "userId", "name", "slug", "source", "category", "instructionsMarkdown", "enabled", "createdAt", "updatedAt"]
+    },
+    "McpConnector": {
+      "title": "McpConnector",
+      "description": "User-configured Model Context Protocol server or financial tool integration",
+      "type": "object",
+      "properties": {
+        "connectorId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "providerType": {
+          "type": "string",
+          "enum": ["builtin", "catalog", "custom"]
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 400
+        },
+        "endpointUrl": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "transport": {
+          "type": "string",
+          "enum": ["builtin", "http", "sse"]
+        },
+        "authType": {
+          "type": "string",
+          "enum": ["none", "bearer", "api_key"]
+        },
+        "authCredentialMasked": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "toolsList": {
+          "type": "array",
+          "description": "Exposed MCP tool identifiers available to Liddy Agent Mode"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["connected", "disconnected", "error"]
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["connectorId", "userId", "name", "slug", "providerType", "category", "transport", "status", "enabled", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -840,6 +1092,18 @@
     "/users/{userId}/payout_settings/{settingId}": {
       "schema": "PayoutSettings",
       "description": "Owner-scoped receiving UPI and bank payout configuration"
+    },
+    "/users/{userId}/chat_sessions/{sessionId}": {
+      "schema": "ChatSession",
+      "description": "Owner-scoped Liddy AI chat and agent conversation sessions"
+    },
+    "/users/{userId}/ai_skills/{skillId}": {
+      "schema": "AiSkill",
+      "description": "Owner-scoped installed and custom SKILL.md modules"
+    },
+    "/users/{userId}/mcp_connectors/{connectorId}": {
+      "schema": "McpConnector",
+      "description": "Owner-scoped MCP server connections and enabled financial tools"
     },
     "/platform_config/payout": {
       "schema": "PlatformPayoutPrivate",
@@ -876,6 +1140,10 @@
     "/admins/{userId}": {
       "schema": "AdminUser",
       "description": "Authorized platform admin records"
+    },
+    "/user_access/{userId}": {
+      "schema": "UserAccessControl",
+      "description": "Administrator-enforced block and session revocation states for users"
     }
   }
 }

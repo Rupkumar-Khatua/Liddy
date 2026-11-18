@@ -34,6 +34,13 @@ service cloud.firestore {
       );
     }
 
+    function isNotBlocked() {
+      return isSignedIn() && (
+        !exists(/databases/$(database)/documents/user_access/$(request.auth.uid)) ||
+        get(/databases/$(database)/documents/user_access/$(request.auth.uid)).data.status != 'blocked'
+      );
+    }
+
     // 3. Entity Validation Blueprints
     function isValidUserProfile(data, userId) {
       return data.keys().hasAll(['userId', 'displayName', 'createdAt'])
@@ -48,7 +55,7 @@ service cloud.firestore {
 
     function isValidUserPreferences(data, userId) {
       return data.keys().hasAll(['userId', 'watchlist', 'currencySymbol', 'currencyPlacement', 'updatedAt'])
-        && data.keys().hasOnly(['userId', 'watchlist', 'currencySymbol', 'currencyPlacement', 'themeMode', 'currentLanguage', 'planTier', 'adFree', 'organizationId', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'watchlist', 'currencySymbol', 'currencyPlacement', 'themeMode', 'currentLanguage', 'planTier', 'planExpiresAt', 'adFree', 'organizationId', 'updatedAt'])
         && data.userId is string && data.userId == userId && data.userId == request.auth.uid
         && data.watchlist is list && data.watchlist.size() <= 40
         && (data.watchlist.size() == 0 || (data.watchlist[0] is string && data.watchlist[0].size() <= 24))
@@ -56,7 +63,8 @@ service cloud.firestore {
         && data.currencyPlacement in ['before', 'after']
         && (!('themeMode' in data) || data.themeMode in ['system', 'light', 'dark'])
         && (!('currentLanguage' in data) || (data.currentLanguage is string && data.currentLanguage.size() >= 2 && data.currentLanguage.size() <= 16))
-        && (!('planTier' in data) || data.planTier in ['free', 'pro', 'team'])
+        && (!('planTier' in data) || data.planTier in ['free', 'day', 'pro', 'team'])
+        && (!('planExpiresAt' in data) || (data.planExpiresAt is string && data.planExpiresAt.size() <= 64))
         && (!('adFree' in data) || data.adFree is bool)
         && (!('organizationId' in data) || (data.organizationId is string && data.organizationId.size() <= 128))
         && data.updatedAt is timestamp;
@@ -71,7 +79,7 @@ service cloud.firestore {
         && (data.amount is int || data.amount is float) && data.amount >= 0 && data.amount <= 1000000000
         && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
         && data.status in ['completed', 'pending']
-        && (!('paymentMethod' in data) || data.paymentMethod in ['UPI', 'CARD', 'CASH', 'SCAN_RECEIPT', 'INVOICE'])
+        && (!('paymentMethod' in data) || data.paymentMethod in ['UPI', 'CARD', 'CASH', 'SCAN_RECEIPT', 'INVOICE', 'PAYPAL'])
         && (!('invoiceId' in data) || (data.invoiceId is string && data.invoiceId.size() <= 128))
         && (!('upiReference' in data) || (data.upiReference is string && data.upiReference.size() <= 200))
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 500))
@@ -81,7 +89,7 @@ service cloud.firestore {
 
     function isValidInvoice(data, userId) {
       return data.keys().hasAll(['userId', 'invoiceNumber', 'date', 'clientName', 'industry', 'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal', 'currency', 'paymentStatus', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['userId', 'invoiceNumber', 'date', 'dueDate', 'senderName', 'senderDetails', 'senderTaxId', 'clientName', 'clientDetails', 'clientEmail', 'clientTaxId', 'industry', 'templateStyle', 'paperFormat', 'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal', 'currency', 'notes', 'upiId', 'payeeName', 'paymentStatus', 'paidAt', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'invoiceNumber', 'date', 'dueDate', 'senderName', 'senderDetails', 'senderTaxId', 'clientName', 'clientDetails', 'clientEmail', 'clientTaxId', 'industry', 'templateStyle', 'paperFormat', 'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal', 'currency', 'notes', 'upiId', 'payeeName', 'paypalId', 'paymentRegion', 'paymentStatus', 'paidAt', 'createdAt', 'updatedAt'])
         && data.userId is string && data.userId == userId && data.userId == request.auth.uid
         && data.invoiceNumber is string && data.invoiceNumber.size() >= 1 && data.invoiceNumber.size() <= 64
         && data.date is string && data.date.size() >= 4 && data.date.size() <= 32
@@ -94,7 +102,7 @@ service cloud.firestore {
         && (!('clientEmail' in data) || (data.clientEmail is string && data.clientEmail.size() <= 254))
         && (!('clientTaxId' in data) || (data.clientTaxId is string && data.clientTaxId.size() <= 64))
         && data.industry in ['RETAIL', 'TECH', 'DINING', 'HEALTHCARE', 'SERVICES']
-        && (!('templateStyle' in data) || data.templateStyle in ['classic', 'minimal', 'corporate'])
+        && (!('templateStyle' in data) || data.templateStyle in ['swiss', 'classic', 'minimal', 'corporate', 'executive'])
         && (!('paperFormat' in data) || data.paperFormat in ['a4', 'letter', 'thermal80'])
         && data.items is list && data.items.size() >= 1 && data.items.size() <= 50
         && data.items[0] is map
@@ -106,6 +114,8 @@ service cloud.firestore {
         && (!('notes' in data) || (data.notes is string && data.notes.size() <= 600))
         && (!('upiId' in data) || (data.upiId is string && data.upiId.size() <= 120))
         && (!('payeeName' in data) || (data.payeeName is string && data.payeeName.size() <= 120))
+        && (!('paypalId' in data) || (data.paypalId is string && data.paypalId.size() <= 254))
+        && (!('paymentRegion' in data) || data.paymentRegion in ['IN', 'INTL'])
         && data.paymentStatus in ['unpaid', 'paid', 'pending']
         && (!('paidAt' in data) || (data.paidAt is string && data.paidAt.size() <= 64))
         && data.createdAt is timestamp
@@ -172,8 +182,8 @@ service cloud.firestore {
         && data.userId is string && data.userId == request.auth.uid && isValidId(data.userId)
         && (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 254))
         && (!('userName' in data) || (data.userName is string && data.userName.size() <= 120))
-        && data.planTier in ['free', 'pro', 'team']
-        && data.billingCycle in ['monthly', 'annual']
+        && data.planTier in ['free', 'day', 'pro', 'team']
+        && data.billingCycle in ['daily', 'monthly', 'annual']
         && data.region in ['IN', 'INTL']
         && data.currency in ['INR', 'USD', 'EUR', 'GBP']
         && (data.amount is int || data.amount is float) && data.amount >= 0 && data.amount <= 10000000
@@ -283,32 +293,103 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidUserAccessControl(data, userId) {
+      return data.keys().hasAll(['userId', 'status', 'revokedAfterMs', 'updatedBy', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'email', 'displayName', 'status', 'revokedAfterMs', 'reason', 'updatedBy', 'updatedAt'])
+        && data.userId is string && data.userId == userId && isValidId(data.userId)
+        && (!('email' in data) || (data.email is string && data.email.size() <= 254))
+        && (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 120))
+        && data.status in ['active', 'revoked', 'blocked']
+        && (data.revokedAfterMs is int || data.revokedAfterMs is float) && data.revokedAfterMs >= 0 && data.revokedAfterMs <= 9999999999999
+        && (!('reason' in data) || (data.reason is string && data.reason.size() <= 300))
+        && data.updatedBy is string && isValidId(data.updatedBy) && data.updatedBy == request.auth.uid
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChatSession(data, userId, sessionId) {
+      return data.keys().hasAll(['sessionId', 'userId', 'title', 'mode', 'messages', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['sessionId', 'userId', 'title', 'mode', 'preview', 'messages', 'createdAt', 'updatedAt'])
+        && data.sessionId is string && data.sessionId == sessionId && isValidId(data.sessionId)
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid && isValidId(data.userId)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 140
+        && data.mode in ['chat', 'agent', 'ocr', 'web']
+        && (!('preview' in data) || (data.preview is string && data.preview.size() <= 240))
+        && data.messages is list && data.messages.size() <= 80 && (data.messages.size() == 0 || data.messages[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAiSkill(data, userId, skillId) {
+      return data.keys().hasAll(['skillId', 'userId', 'name', 'slug', 'source', 'category', 'instructionsMarkdown', 'enabled', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['skillId', 'userId', 'name', 'slug', 'source', 'category', 'description', 'triggers', 'instructionsMarkdown', 'author', 'repo', 'installs', 'enabled', 'createdAt', 'updatedAt'])
+        && data.skillId is string && data.skillId == skillId && isValidId(data.skillId)
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid && isValidId(data.userId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.slug is string && data.slug.size() >= 1 && data.slug.size() <= 140
+        && data.source in ['builtin', 'skills.sh', 'custom']
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
+        && (!('description' in data) || (data.description is string && data.description.size() <= 400))
+        && (!('triggers' in data) || (data.triggers is string && data.triggers.size() <= 240))
+        && data.instructionsMarkdown is string && data.instructionsMarkdown.size() >= 1 && data.instructionsMarkdown.size() <= 12000
+        && (!('author' in data) || (data.author is string && data.author.size() <= 120))
+        && (!('repo' in data) || (data.repo is string && data.repo.size() <= 200))
+        && (!('installs' in data) || ((data.installs is int || data.installs is float) && data.installs >= 0 && data.installs <= 100000000))
+        && data.enabled is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMcpConnector(data, userId, connectorId) {
+      return data.keys().hasAll(['connectorId', 'userId', 'name', 'slug', 'providerType', 'category', 'transport', 'status', 'enabled', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['connectorId', 'userId', 'name', 'slug', 'providerType', 'category', 'description', 'endpointUrl', 'transport', 'authType', 'authCredentialMasked', 'toolsList', 'status', 'enabled', 'createdAt', 'updatedAt'])
+        && data.connectorId is string && data.connectorId == connectorId && isValidId(data.connectorId)
+        && data.userId is string && data.userId == userId && data.userId == request.auth.uid && isValidId(data.userId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.slug is string && data.slug.size() >= 1 && data.slug.size() <= 120
+        && data.providerType in ['builtin', 'catalog', 'custom']
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
+        && (!('description' in data) || (data.description is string && data.description.size() <= 400))
+        && (!('endpointUrl' in data) || (data.endpointUrl is string && data.endpointUrl.size() <= 512))
+        && data.transport in ['builtin', 'http', 'sse']
+        && (!('authType' in data) || data.authType in ['none', 'bearer', 'api_key'])
+        && (!('authCredentialMasked' in data) || (data.authCredentialMasked is string && data.authCredentialMasked.size() <= 120))
+        && (!('toolsList' in data) || (data.toolsList is list && data.toolsList.size() <= 40 && (data.toolsList.size() == 0 || data.toolsList[0] is string)))
+        && data.status in ['connected', 'disconnected', 'error']
+        && data.enabled is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     // 4. Owner-Scoped Collection Match Rules
     match /users/{userId} {
       allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if isAdmin();
       allow create: if isValidId(userId) && isOwner(userId)
         && isValidUserProfile(incoming(), userId)
-        && incoming().createdAt == request.time;
+        && incoming().createdAt == request.time
+        && isNotBlocked();
       allow update: if isValidId(userId) && isOwner(userId)
         && isValidUserProfile(incoming(), userId)
         && incoming().userId == existing().userId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoURL', 'updatedAt']);
-      allow delete: if isValidId(userId) && isOwner(userId);
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoURL', 'updatedAt'])
+        && isNotBlocked();
+      allow delete: if isValidId(userId) && (isOwner(userId) || isAdmin());
 
       match /preferences/{prefId} {
         allow get: if isValidId(userId) && isValidId(prefId) && isOwner(userId);
         allow list: if isOwner(userId) && resource.data.userId == request.auth.uid;
         allow create: if isValidId(userId) && isValidId(prefId) && isOwner(userId)
           && isValidUserPreferences(incoming(), userId)
-          && incoming().updatedAt == request.time;
+          && incoming().updatedAt == request.time
+          && isNotBlocked();
         allow update: if isValidId(userId) && isValidId(prefId) && isOwner(userId)
           && isValidUserPreferences(incoming(), userId)
           && incoming().userId == existing().userId
           && incoming().updatedAt == request.time
-          && incoming().diff(existing()).affectedKeys().hasOnly(['watchlist', 'currencySymbol', 'currencyPlacement', 'themeMode', 'currentLanguage', 'planTier', 'adFree', 'organizationId', 'updatedAt']);
+          && incoming().diff(existing()).affectedKeys().hasOnly(['watchlist', 'currencySymbol', 'currencyPlacement', 'themeMode', 'currentLanguage', 'planTier', 'planExpiresAt', 'adFree', 'organizationId', 'updatedAt'])
+          && isNotBlocked();
         allow delete: if isValidId(userId) && isValidId(prefId) && isOwner(userId);
       }
 
@@ -341,7 +422,7 @@ service cloud.firestore {
           && incoming().userId == existing().userId
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
-          && incoming().diff(existing()).affectedKeys().hasOnly(['dueDate', 'senderName', 'senderDetails', 'senderTaxId', 'clientName', 'clientDetails', 'clientEmail', 'clientTaxId', 'templateStyle', 'paperFormat', 'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal', 'notes', 'upiId', 'payeeName', 'paymentStatus', 'paidAt', 'updatedAt']);
+          && incoming().diff(existing()).affectedKeys().hasOnly(['dueDate', 'senderName', 'senderDetails', 'senderTaxId', 'clientName', 'clientDetails', 'clientEmail', 'clientTaxId', 'templateStyle', 'paperFormat', 'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal', 'notes', 'upiId', 'payeeName', 'paypalId', 'paymentRegion', 'paymentStatus', 'paidAt', 'updatedAt']);
         allow delete: if isValidId(userId) && isValidId(invoiceId) && isOwner(userId);
       }
 
@@ -381,6 +462,63 @@ service cloud.firestore {
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly(['upiId', 'payeeName', 'bankName', 'accountHolder', 'accountNumber', 'ifscCode', 'updatedAt']);
         allow delete: if isValidId(userId) && isValidId(settingId) && isOwner(userId);
+      }
+
+      match /chat_sessions/{sessionId} {
+        allow get: if isValidId(userId) && isValidId(sessionId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(sessionId) && isOwner(userId)
+          && isValidChatSession(incoming(), userId, sessionId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isNotBlocked();
+        allow update: if isValidId(userId) && isValidId(sessionId) && isOwner(userId)
+          && isValidChatSession(incoming(), userId, sessionId)
+          && incoming().sessionId == existing().sessionId
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'mode', 'preview', 'messages', 'updatedAt'])
+          && isNotBlocked();
+        allow delete: if isValidId(userId) && isValidId(sessionId) && isOwner(userId);
+      }
+
+      match /ai_skills/{skillId} {
+        allow get: if isValidId(userId) && isValidId(skillId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(skillId) && isOwner(userId)
+          && isValidAiSkill(incoming(), userId, skillId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isNotBlocked();
+        allow update: if isValidId(userId) && isValidId(skillId) && isOwner(userId)
+          && isValidAiSkill(incoming(), userId, skillId)
+          && incoming().skillId == existing().skillId
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'slug', 'category', 'description', 'triggers', 'instructionsMarkdown', 'enabled', 'updatedAt'])
+          && isNotBlocked();
+        allow delete: if isValidId(userId) && isValidId(skillId) && isOwner(userId);
+      }
+
+      match /mcp_connectors/{connectorId} {
+        allow get: if isValidId(userId) && isValidId(connectorId) && isOwner(userId);
+        allow list: if isValidId(userId) && isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isValidId(userId) && isValidId(connectorId) && isOwner(userId)
+          && isValidMcpConnector(incoming(), userId, connectorId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isNotBlocked();
+        allow update: if isValidId(userId) && isValidId(connectorId) && isOwner(userId)
+          && isValidMcpConnector(incoming(), userId, connectorId)
+          && incoming().connectorId == existing().connectorId
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'description', 'endpointUrl', 'transport', 'authType', 'authCredentialMasked', 'toolsList', 'status', 'enabled', 'updatedAt'])
+          && isNotBlocked();
+        allow delete: if isValidId(userId) && isValidId(connectorId) && isOwner(userId);
       }
     }
 
@@ -485,6 +623,17 @@ service cloud.firestore {
         && isValidPlatformAiImagePublic(incoming())
         && incoming().updatedAt == request.time;
       allow delete: if isAdmin();
+    }
+
+    // 12. Administrator User Access Control (Revoke Sessions & Block Accounts)
+    match /user_access/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isValidId(userId) && isAdmin()
+        && isValidUserAccessControl(incoming(), userId)
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(userId) && isAdmin();
     }
   }
 }

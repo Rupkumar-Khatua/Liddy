@@ -48,10 +48,17 @@ const INDUSTRY_CONFIGS: Record<IndustryTheme, { label: string; sampleNotes: stri
 };
 
 export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onCancel }) => {
-  const { addInvoice, addTransaction, currencySymbol, payoutConfig } = useFinMind();
+  const {
+    addInvoice,
+    addTransaction,
+    currencySymbol,
+    payoutConfig,
+    paymentRegion,
+    trackEngagement,
+  } = useFinMind();
 
   const [industry, setIndustry] = useState<IndustryTheme>('SERVICES');
-  const [templateStyle, setTemplateStyle] = useState<InvoiceTemplateStyle>('classic');
+  const [templateStyle, setTemplateStyle] = useState<InvoiceTemplateStyle>('swiss');
   const [paperFormat, setPaperFormat] = useState<InvoicePaperFormat>('a4');
 
   const [invoiceNumber, setInvoiceNumber] = useState(
@@ -59,7 +66,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
   );
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState(new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0]);
-  const [currency, setCurrency] = useState(currencySymbol || '₹');
+  const [currency, setCurrency] = useState(() => (paymentRegion === 'IN' ? '₹' : '$'));
+  const [currencyTouched, setCurrencyTouched] = useState(false);
 
   const [senderName, setSenderName] = useState(() => payoutConfig.payeeName || '');
   const [senderDetails, setSenderDetails] = useState('');
@@ -71,21 +79,31 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
   const [clientDetails, setClientDetails] = useState('');
 
   const [upiId, setUpiId] = useState(() => payoutConfig.upiId || '');
+  const [paypalId, setPaypalId] = useState(() => payoutConfig.paypalMerchantEmail || '');
   const [payeeName, setPayeeName] = useState(() => payoutConfig.payeeName || payoutConfig.accountHolder || '');
   const [notes, setNotes] = useState(INDUSTRY_CONFIGS['SERVICES'].sampleNotes);
   const [items, setItems] = useState<InvoiceLineItem[]>([]);
 
   useEffect(() => {
+    if (!currencyTouched) {
+      setCurrency(paymentRegion === 'IN' ? '₹' : currencySymbol === '₹' ? '$' : currencySymbol || '$');
+    }
+  }, [paymentRegion, currencySymbol, currencyTouched]);
+
+  useEffect(() => {
     if (payoutConfig.upiId && !upiId) setUpiId(payoutConfig.upiId);
+    if (payoutConfig.paypalMerchantEmail && !paypalId) setPaypalId(payoutConfig.paypalMerchantEmail);
     if (payoutConfig.payeeName && !payeeName) setPayeeName(payoutConfig.payeeName);
     if (payoutConfig.payeeName && !senderName) setSenderName(payoutConfig.payeeName);
-  }, [payoutConfig, upiId, payeeName, senderName]);
+  }, [payoutConfig, upiId, paypalId, payeeName, senderName]);
 
   const [aiPrompt, setAiPrompt] = useState('');
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiStatusMessage, setAiStatusMessage] = useState<string | null>(null);
 
   const [isUpiModalOpen, setIsUpiModalOpen] = useState(false);
+  const [isPaypalSettleOpen, setIsPaypalSettleOpen] = useState(false);
+  const [paypalRefInput, setPaypalRefInput] = useState('');
   const [isPreviewOverlayOpen, setIsPreviewOverlayOpen] = useState(false);
   const [embeddedQr, setEmbeddedQr] = useState<string>('');
   const [savedSuccessMsg, setSavedSuccessMsg] = useState<string | null>(null);
@@ -114,6 +132,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
   }, [subtotal, discountTotal, taxTotal]);
 
   useEffect(() => {
+    if (paymentRegion !== 'IN') {
+      setEmbeddedQr('');
+      return;
+    }
     const activeUpi = upiId.trim() || payoutConfig.upiId?.trim() || '';
     if (!activeUpi) {
       setEmbeddedQr('');
@@ -124,7 +146,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
     QRCode.toDataURL(uri, { width: 140, margin: 1 })
       .then((url) => setEmbeddedQr(url))
       .catch(() => {});
-  }, [upiId, payeeName, senderName, payoutConfig.upiId, payoutConfig.payeeName, grandTotal, invoiceNumber]);
+  }, [paymentRegion, upiId, payeeName, senderName, payoutConfig.upiId, payoutConfig.payeeName, grandTotal, invoiceNumber]);
 
   const draftInvoiceObject: Invoice = useMemo(
     () => ({
@@ -162,7 +184,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
       grandTotal,
       currency,
       notes,
-      upiId: upiId || undefined,
+      upiId: paymentRegion === 'IN' ? upiId || undefined : undefined,
+      paypalId: paymentRegion === 'INTL' ? paypalId || undefined : undefined,
+      paymentRegion,
       payeeName: payeeName || undefined,
       paymentStatus: 'unpaid',
     }),
@@ -188,13 +212,15 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
       currency,
       notes,
       upiId,
+      paypalId,
+      paymentRegion,
       payeeName,
     ]
   );
 
   const previewHtml = useMemo(
-    () => buildPrintableInvoiceHtml(draftInvoiceObject, embeddedQr, templateStyle, paperFormat),
-    [draftInvoiceObject, embeddedQr, templateStyle, paperFormat]
+    () => buildPrintableInvoiceHtml(draftInvoiceObject, embeddedQr, templateStyle, paperFormat, paymentRegion),
+    [draftInvoiceObject, embeddedQr, templateStyle, paperFormat, paymentRegion]
   );
 
   const handleIndustryChange = (newIndustry: IndustryTheme) => {
@@ -238,6 +264,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
   const handleGenerateWithAi = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!aiPrompt.trim()) return;
+    if (!trackEngagement('AI Invoice Builder')) return;
     setIsGeneratingAi(true);
     setAiStatusMessage('Drafting itemized invoice...');
     try {
@@ -283,6 +310,7 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
       setTimeout(() => setAiStatusMessage(null), 3000);
       return;
     }
+    if (!trackEngagement('AI Invoice Audit')) return;
     setIsGeneratingAi(true);
     setAiStatusMessage('Auditing items & taxes...');
     try {
@@ -358,7 +386,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
       grandTotal,
       currency,
       notes,
-      upiId: upiId || undefined,
+      upiId: paymentRegion === 'IN' ? upiId || undefined : undefined,
+      paypalId: paymentRegion === 'INTL' ? paypalId || undefined : undefined,
+      paymentRegion,
       payeeName: payeeName || undefined,
       paymentStatus: isSettled ? 'paid' : 'unpaid',
       paidAt,
@@ -372,8 +402,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
         date: (paidAt || new Date().toISOString()).split('T')[0],
         status: 'completed',
         invoiceId: created.id,
-        upiReference: settlement.upiRef || upiId || undefined,
-        paymentMethod: 'UPI',
+        upiReference: settlement.upiRef || (paymentRegion === 'IN' ? upiId : paypalId) || undefined,
+        paymentMethod: settlement.method === 'PAYPAL' ? 'PAYPAL' : 'UPI',
         notes: `Settled ${invoiceNumber} via ${settlement.method}`,
       });
     }
@@ -398,7 +428,9 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
             Structured Invoice Builder
           </h2>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Create clean bills with GST/Tax IDs, A4 / US Letter / 80mm POS sizing, live preview overlay and UPI QR.
+            {paymentRegion === 'IN'
+              ? 'Create clean bills with GST/Tax IDs, A4 / Letter / 80mm POS sizing and dynamic UPI QR.'
+              : 'Create clean bills with Tax IDs, A4 / Letter / 80mm POS sizing and PayPal settlement.'}
           </p>
         </div>
 
@@ -415,14 +447,14 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
           <button
             type="button"
             onClick={() => setIsPreviewOverlayOpen(true)}
-            className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-bold cursor-pointer"
+            className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-bold cursor-pointer whitespace-nowrap"
           >
             Preview Print / PDF
           </button>
           <button
             type="button"
             onClick={() => handleSaveInvoice()}
-            className="px-6 py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 cursor-pointer"
+            className="px-6 py-2.5 bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95 cursor-pointer whitespace-nowrap"
           >
             Save Invoice
           </button>
@@ -436,33 +468,43 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
       )}
 
       {/* Design Style + Print Paper Size + Industry Controls */}
-      <div className="glass-card dark:bg-neutral-900/80 dark:border-neutral-800 p-5 rounded-3xl border border-neutral-200/80 space-y-4">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div>
+      <div className="bg-white dark:bg-neutral-900/90 p-5 rounded-3xl border border-[#E5E5E5] dark:border-neutral-800 space-y-4">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          <div className="lg:col-span-8">
             <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 font-bold mb-2">
-              Design Format Style
+              Design Template Library
             </p>
-            <div className="grid grid-cols-3 gap-2">
-              {(Object.keys(TEMPLATE_LABELS) as InvoiceTemplateStyle[]).map((tpl) => (
-                <button
-                  key={tpl}
-                  type="button"
-                  onClick={() => setTemplateStyle(tpl)}
-                  className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                    templateStyle === tpl
-                      ? 'border-neutral-900 dark:border-white bg-neutral-900 dark:bg-white text-white dark:text-neutral-950'
-                      : 'border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-neutral-700 dark:text-neutral-300'
-                  }`}
-                >
-                  <div className="text-xs font-bold">{TEMPLATE_LABELS[tpl].label}</div>
-                </button>
-              ))}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {(Object.keys(TEMPLATE_LABELS) as InvoiceTemplateStyle[]).map((tpl) => {
+                const info = TEMPLATE_LABELS[tpl];
+                const selected = templateStyle === tpl;
+                return (
+                  <button
+                    key={tpl}
+                    type="button"
+                    onClick={() => setTemplateStyle(tpl)}
+                    className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer space-y-1.5 ${
+                      selected
+                        ? 'border-neutral-900 dark:border-white bg-[#FAFAFA] dark:bg-white/10 shadow-xs'
+                        : 'border-[#E5E5E5] dark:border-neutral-700 bg-white dark:bg-neutral-950 text-neutral-700 dark:text-neutral-300'
+                    }`}
+                  >
+                    <div
+                      className="h-4 rounded border border-[#E5E5E5] flex items-center px-1.5"
+                      style={{ backgroundColor: info.swatchBg }}
+                    >
+                      <span className="w-3.5 h-1 rounded-full" style={{ backgroundColor: info.swatchAccent }} />
+                    </div>
+                    <div className="text-xs font-bold leading-tight text-neutral-900 dark:text-white">{info.label}</div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          <div>
+          <div className="lg:col-span-4">
             <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 font-bold mb-2">
-              Printing Paper Format
+              Paper Format
             </p>
             <div className="grid grid-cols-3 gap-2">
               {(Object.keys(PAPER_FORMAT_SPECS) as InvoicePaperFormat[]).map((pf) => (
@@ -472,8 +514,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
                   onClick={() => setPaperFormat(pf)}
                   className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
                     paperFormat === pf
-                      ? 'border-indigo-600 bg-indigo-600 text-white'
-                      : 'border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-950 text-neutral-700 dark:text-neutral-300'
+                      ? 'border-neutral-900 dark:border-white bg-neutral-900 dark:bg-white text-white dark:text-neutral-950'
+                      : 'border-[#E5E5E5] dark:border-neutral-700 bg-white dark:bg-neutral-950 text-neutral-700 dark:text-neutral-300'
                   }`}
                 >
                   <div className="text-xs font-bold">{PAPER_FORMAT_SPECS[pf].badge}</div>
@@ -649,7 +691,10 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
             <label className="text-[10px] font-bold uppercase tracking-wider text-neutral-400 font-mono">Currency</label>
             <select
               value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
+              onChange={(e) => {
+                setCurrencyTouched(true);
+                setCurrency(e.target.value);
+              }}
               className="w-full mt-1 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-xl px-3 py-2 text-xs font-bold text-neutral-900 dark:text-white"
             >
               <option value="₹">₹ (INR)</option>
@@ -764,60 +809,144 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
           )}
         </div>
 
-        {/* Bottom Split: UPI QR & Totals Summary */}
+        {/* Bottom Split: Regional Settlement Gateway (India UPI Card/QR vs International PayPal) & Totals Summary */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
-          <div className="p-5 rounded-2xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 font-bold flex items-center justify-center text-xs">
-                  UPI
-                </span>
-                <div>
-                  <h5 className="text-xs font-bold text-neutral-900 dark:text-white">Dynamic UPI QR</h5>
-                  <p className="text-[10px] text-neutral-400">Embedded directly on printed PDF</p>
+          {paymentRegion === 'IN' ? (
+            <div className="p-5 rounded-2xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 font-bold flex items-center justify-center text-xs">
+                    UPI
+                  </span>
+                  <div>
+                    <h5 className="text-xs font-bold text-neutral-900 dark:text-white">UPI Card &amp; QR Gateway</h5>
+                    <p className="text-[10px] text-neutral-400">Embedded directly on printed PDF</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsUpiModalOpen(true)}
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer whitespace-nowrap"
+                >
+                  Collect UPI &amp; Settle
+                </button>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="p-2 bg-white rounded-xl border border-neutral-200/80 shadow-2xs shrink-0">
+                  {embeddedQr ? (
+                    <img src={embeddedQr} alt="UPI QR" className="w-24 h-24 object-contain mix-blend-multiply" />
+                  ) : (
+                    <div className="w-24 h-24 flex items-center justify-center text-[10px] text-neutral-400">QR</div>
+                  )}
+                </div>
+                <div className="flex-1 space-y-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase font-mono">Receiver VPA (UPI ID)</label>
+                    <input
+                      type="text"
+                      value={upiId}
+                      onChange={(e) => setUpiId(e.target.value)}
+                      placeholder="merchant@okhdfcbank"
+                      className="w-full mt-0.5 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-2.5 py-1 text-xs font-mono font-medium text-neutral-900 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-neutral-400 uppercase font-mono">Payee Name</label>
+                    <input
+                      type="text"
+                      value={payeeName}
+                      onChange={(e) => setPayeeName(e.target.value)}
+                      placeholder="Billing Name"
+                      className="w-full mt-0.5 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-2.5 py-1 text-xs font-medium text-neutral-900 dark:text-white"
+                    />
+                  </div>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setIsUpiModalOpen(true)}
-                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer"
-              >
-                Collect UPI &amp; Settle
-              </button>
             </div>
-
-            <div className="flex items-center gap-4">
-              <div className="p-2 bg-white rounded-xl border border-neutral-200/80 shadow-2xs shrink-0">
-                {embeddedQr ? (
-                  <img src={embeddedQr} alt="UPI QR" className="w-24 h-24 object-contain mix-blend-multiply" />
-                ) : (
-                  <div className="w-24 h-24 flex items-center justify-center text-[10px] text-neutral-400">QR</div>
-                )}
+          ) : (
+            <div className="p-5 rounded-2xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700 space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-xl bg-[#003087]/10 text-[#003087] dark:text-sky-400 font-bold flex items-center justify-center text-xs">
+                    PP
+                  </span>
+                  <div>
+                    <h5 className="text-xs font-bold text-neutral-900 dark:text-white">PayPal Settlement Gateway</h5>
+                    <p className="text-[10px] text-neutral-400">PayPal ID embedded on exported PDF &amp; link</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPaypalSettleOpen((prev) => !prev)}
+                  className="px-3 py-1.5 bg-[#003087] hover:bg-[#002569] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer whitespace-nowrap"
+                >
+                  {isPaypalSettleOpen ? 'Hide Settle' : 'Settle via PayPal'}
+                </button>
               </div>
-              <div className="flex-1 space-y-2">
+
+              <div className="space-y-2.5">
                 <div>
-                  <label className="text-[10px] font-bold text-neutral-400 uppercase font-mono">Receiver VPA (UPI ID)</label>
+                  <label className="text-[10px] font-bold text-neutral-400 uppercase font-mono">
+                    Receiver PayPal ID (Email or @handle)
+                  </label>
                   <input
                     type="text"
-                    value={upiId}
-                    onChange={(e) => setUpiId(e.target.value)}
-                    placeholder="merchant@okhdfcbank"
-                    className="w-full mt-0.5 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-2.5 py-1 text-xs font-mono font-medium text-neutral-900 dark:text-white"
+                    value={paypalId}
+                    onChange={(e) => setPaypalId(e.target.value)}
+                    placeholder="billing@company.com or @handle"
+                    className="w-full mt-0.5 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-3 py-1.5 text-xs font-mono font-medium text-neutral-900 dark:text-white"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold text-neutral-400 uppercase font-mono">Payee Name</label>
+                  <label className="text-[10px] font-bold text-neutral-400 uppercase font-mono">Beneficiary Name</label>
                   <input
                     type="text"
                     value={payeeName}
                     onChange={(e) => setPayeeName(e.target.value)}
-                    placeholder="Billing Name"
-                    className="w-full mt-0.5 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-2.5 py-1 text-xs font-medium text-neutral-900 dark:text-white"
+                    placeholder="Account / Studio Name"
+                    className="w-full mt-0.5 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-3 py-1.5 text-xs font-medium text-neutral-900 dark:text-white"
                   />
                 </div>
               </div>
+
+              {isPaypalSettleOpen && (
+                <div className="p-3 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-neutral-500">
+                      Amount due: <strong className="font-mono text-neutral-900 dark:text-white">{grandTotal.toFixed(2)} {currency}</strong>
+                    </span>
+                    {paypalId.trim() && (
+                      <a
+                        href={`https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=${encodeURIComponent(paypalId.trim())}&amount=${grandTotal.toFixed(2)}&currency_code=${currency === '€' ? 'EUR' : currency === '£' ? 'GBP' : 'USD'}&item_name=${encodeURIComponent(`Invoice ${invoiceNumber}`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-bold text-[#003087] dark:text-sky-400 hover:underline"
+                      >
+                        Open PayPal Checkout &rarr;
+                      </a>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={paypalRefInput}
+                      onChange={(e) => setPaypalRefInput(e.target.value)}
+                      placeholder="PayPal Transaction ID (e.g. 9AB12345CD)"
+                      className="flex-1 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleSaveInvoice({ method: 'PAYPAL', upiRef: paypalRefInput.trim() || paypalId.trim() })}
+                      className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
+                    >
+                      Save &amp; Mark Paid
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           <div className="space-y-3 flex flex-col justify-between">
             <div className="space-y-2 text-xs">
@@ -862,12 +991,12 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
       {isPreviewOverlayOpen &&
         createPortal(
           <div
-            className="fixed inset-0 z-[9995] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-enter"
+            className="fixed inset-0 z-[9995] bg-neutral-950/45 dark:bg-black/65 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
             onClick={(e) => {
               if (e.target === e.currentTarget) setIsPreviewOverlayOpen(false);
             }}
           >
-            <div className="bg-white dark:bg-[#121216] border border-neutral-200 dark:border-neutral-800 rounded-[28px] max-w-4xl w-full p-6 shadow-2xl my-auto space-y-4 text-neutral-900 dark:text-white">
+            <div className="bg-white dark:bg-[#121216] border border-neutral-200 dark:border-neutral-800 rounded-[28px] max-w-4xl w-full p-6 shadow-2xl my-auto space-y-4 text-neutral-900 dark:text-white animate-enter">
               <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-neutral-200 dark:border-neutral-800">
                 <div>
                   <h3 className="text-lg font-extrabold">
@@ -948,8 +1077,8 @@ export const InvoiceGenerator: React.FC<InvoiceGeneratorProps> = ({ onSaved, onC
           document.body
         )}
 
-      {/* UPI Payment Modal */}
-      {isUpiModalOpen && (
+      {/* UPI Payment Modal (India only) */}
+      {paymentRegion === 'IN' && isUpiModalOpen && (
         <UPIPaymentModal
           isOpen={isUpiModalOpen}
           onClose={() => setIsUpiModalOpen(false)}

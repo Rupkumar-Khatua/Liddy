@@ -52,10 +52,10 @@ const GREETING_SETS: Record<'morning' | 'afternoon' | 'evening' | 'night', strin
 };
 
 const SUBTITLE_OPTIONS = [
-  'See where your money goes, track your connected stock broker balance and keep bills settled.',
-  'Everyday expenses, manual broking portfolio tracking and clean client invoicing in one place.',
-  'Your daily personal cashflow, stock holdings summary and invoice settlements at a glance.',
-  'Clear numbers without clutter: daily spending categories, broker balances and pending bills.',
+  'Daily expenses, stock balance and pending bills.',
+  'Personal cashflow, holdings and Swiss invoices in one view.',
+  'Track where your money goes without the clutter.',
+  'Clear numbers for daily spending, stocks and invoices.',
 ];
 
 interface DashboardProps {
@@ -74,6 +74,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
     updateStockPortfolio,
     currencyPlacement,
     payoutConfig,
+    paymentRegion,
   } = useFinMind();
 
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly'>('daily');
@@ -296,10 +297,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
           </button>
           <button
             type="button"
-            onClick={() => navigate('scanner', 'TRANSACTIONS')}
+            onClick={() => navigate('expenses', 'TRANSACTIONS')}
             className="px-4 py-2.5 rounded-xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 hover:border-teal-500 text-neutral-800 dark:text-neutral-200 text-xs font-semibold cursor-pointer transition-colors"
           >
-            Log / Scan Expense
+            + Log Expense
           </button>
           <button
             type="button"
@@ -322,7 +323,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
               </p>
               <button
                 type="button"
-                onClick={() => navigate('scanner', 'TRANSACTIONS')}
+                onClick={() => navigate('expenses', 'TRANSACTIONS')}
                 className="text-xs font-semibold text-teal-700 dark:text-teal-400 hover:underline cursor-pointer"
               >
                 Where I Spent What &rarr;
@@ -363,7 +364,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
               </div>
             ) : (
               <div className="w-full h-16 flex items-center text-xs text-neutral-400 dark:text-neutral-500 font-mono">
-                Scan receipts or log daily spending to see where your money goes.
+                Log daily expenses to see your category breakdown.
               </div>
             )}
           </div>
@@ -562,16 +563,32 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
                   >
                     Preview / PDF
                   </button>
+                  {paymentRegion === 'IN' ? (
+                    <button
+                      type="button"
+                      onClick={() => setSettlingInvoice(inv)}
+                      className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
+                    >
+                      Pay via UPI
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setInspectingInvoice(inv)}
+                      className="px-3 py-1.5 rounded-lg bg-[#003087] hover:bg-[#002569] text-white text-xs font-bold cursor-pointer whitespace-nowrap"
+                    >
+                      Pay with PayPal
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => setSettlingInvoice(inv)}
-                    className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
-                  >
-                    Pay via UPI
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => markInvoicePaid(inv.id, 'UPI', inv.upiId)}
+                    onClick={() =>
+                      markInvoicePaid(
+                        inv.id,
+                        paymentRegion === 'IN' ? 'UPI' : 'PAYPAL',
+                        paymentRegion === 'IN' ? inv.upiId : inv.paypalId
+                      )
+                    }
                     className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
                   >
                     Mark Paid
@@ -659,15 +676,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
                   Ready for Your First Entry
                 </h4>
                 <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
-                  Your account starts fresh with zero sample entries. Snap a receipt or add an entry to plot live spending.
+                  Add your first daily expense to plot your spending velocity.
                 </p>
                 <div className="pt-2 flex justify-center gap-2">
                   <button
                     type="button"
-                    onClick={() => navigate('scanner', 'TRANSACTIONS')}
+                    onClick={() => navigate('expenses', 'TRANSACTIONS')}
                     className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 rounded-xl text-xs font-bold transition-all cursor-pointer"
                   >
-                    Capture First Receipt &rarr;
+                    Log First Expense &rarr;
                   </button>
                 </div>
               </div>
@@ -991,7 +1008,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigateTab, onNavigateWindow }
         onClose={() => setInspectingInvoice(null)}
       />
 
-      {settlingInvoice && (
+      {paymentRegion === 'IN' && settlingInvoice && (
         <UPIPaymentModal
           isOpen={Boolean(settlingInvoice)}
           onClose={() => setSettlingInvoice(null)}

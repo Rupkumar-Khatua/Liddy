@@ -9,6 +9,7 @@ export enum Page {
 export type WindowId =
   | 'home'
   | 'overview'
+  | 'expenses'
   | 'invoices'
   | 'scanner'
   | 'markets'
@@ -19,9 +20,9 @@ export type WindowId =
   | 'profile'
   | 'admin';
 
-export type PlanTier = 'free' | 'pro' | 'team';
+export type PlanTier = 'free' | 'day' | 'pro';
 
-export type BillingCycle = 'monthly' | 'annual';
+export type BillingCycle = 'daily' | 'monthly' | 'annual';
 export type PaymentRegion = 'IN' | 'INTL';
 export type PaymentRail = 'UPI_QR' | 'UPI_ID' | 'PAYPAL';
 
@@ -126,7 +127,18 @@ export interface StockPortfolioState {
 }
 
 export type MindMapShape = 'hub' | 'step' | 'insight' | 'metric' | 'action';
-export type SlideTheme = 'midnight' | 'ivory' | 'emerald' | 'cobalt';
+export type SlideTheme =
+  | 'ivory'
+  | 'midnight'
+  | 'emerald'
+  | 'cobalt'
+  | 'ledger'
+  | 'navy'
+  | 'charcoal'
+  | 'growth';
+export type SlideFontStyle = 'swiss_sans' | 'editorial_serif' | 'mono_quant' | 'executive_geometric';
+export type SlideContentStyle = 'short' | 'brief' | 'medium' | 'detailed';
+export type SlideGraphicsStyle = 'charts' | 'diagrams' | 'cards' | 'roadmap' | 'minimal';
 
 export interface MindMapNode {
   id: string;
@@ -141,6 +153,12 @@ export interface MindMapNode {
   author?: string;
 }
 
+export interface SlideChartBar {
+  label: string;
+  value: number;
+  unit?: string;
+}
+
 export interface SlideItem {
   id: string;
   title: string;
@@ -148,7 +166,11 @@ export interface SlideItem {
   bullets: string[];
   layout: 'cover' | 'two-col' | 'metrics' | 'roadmap';
   theme?: SlideTheme;
+  fontStyle?: SlideFontStyle;
+  contentStyle?: SlideContentStyle;
+  graphicsStyle?: SlideGraphicsStyle;
   metricHighlight?: string;
+  chartBars?: SlideChartBar[];
 }
 
 export interface CollabNote {
@@ -159,6 +181,19 @@ export interface CollabNote {
   createdAt: string;
 }
 
+export type UserAccessStatus = 'active' | 'revoked' | 'blocked';
+
+export interface UserAccessRecord {
+  userId: string;
+  email?: string;
+  displayName?: string;
+  status: UserAccessStatus;
+  revokedAfterMs: number;
+  reason?: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
 export interface CollabParticipant {
   clientId: string;
   peerId?: string;
@@ -166,10 +201,24 @@ export interface CollabParticipant {
   role: string;
   color: string;
   joinedAt: string;
+  isHost?: boolean;
   micOn?: boolean;
   camOn?: boolean;
   screenOn?: boolean;
   handRaised?: boolean;
+}
+
+export interface CollabWaitingPeer {
+  clientId: string;
+  name: string;
+  role: string;
+  requestedAt: string;
+}
+
+export interface CollabDeniedEntry {
+  guestKey: string;
+  name: string;
+  deniedAt: string;
 }
 
 export interface CollabChatMessage {
@@ -193,8 +242,32 @@ export interface IdeationBoardRecord {
 }
 
 export type IndustryTheme = 'RETAIL' | 'TECH' | 'DINING' | 'HEALTHCARE' | 'SERVICES';
-export type InvoiceTemplateStyle = 'classic' | 'minimal' | 'corporate';
+export type InvoiceTemplateStyle = 'swiss' | 'classic' | 'minimal' | 'corporate' | 'executive';
 export type InvoicePaperFormat = 'a4' | 'letter' | 'thermal80';
+
+export interface ReceiptExtractionLineItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  taxPercent?: number;
+  total: number;
+}
+
+export interface ReceiptExtractionResult {
+  merchant: string;
+  amount: number;
+  date: string;
+  category: string;
+  invoiceNumber?: string;
+  senderDetails?: string;
+  currency?: string;
+  subtotal?: number;
+  taxTotal?: number;
+  paymentMethod?: string;
+  notes?: string;
+  isHandwritten?: boolean;
+  items?: ReceiptExtractionLineItem[];
+}
 
 export interface InvoiceLineItem {
   id: string;
@@ -230,6 +303,8 @@ export interface Invoice {
   notes?: string;
   upiId?: string;
   payeeName?: string;
+  paypalId?: string;
+  paymentRegion?: PaymentRegion;
   paymentStatus: 'unpaid' | 'paid' | 'pending';
   paidAt?: string;
   industrySpecific?: Record<string, string>;
@@ -245,7 +320,7 @@ export interface Transaction {
   status: 'completed' | 'pending';
   invoiceId?: string;
   upiReference?: string;
-  paymentMethod?: 'UPI' | 'CARD' | 'CASH' | 'SCAN_RECEIPT' | 'INVOICE';
+  paymentMethod?: 'UPI' | 'CARD' | 'CASH' | 'SCAN_RECEIPT' | 'INVOICE' | 'PAYPAL';
   notes?: string;
 }
 
@@ -265,15 +340,121 @@ export interface AgentLedgerOperations {
   markInvoicesPaid?: Array<{ id: string; paymentMethod?: string; upiReference?: string }>;
 }
 
+export interface AgentChartDatum {
+  label: string;
+  value: number;
+  secondaryValue?: number;
+}
+
+export interface AgentChartSpec {
+  id: string;
+  title: string;
+  subtitle?: string;
+  chartType: 'bar' | 'pie' | 'trend';
+  currencySymbol?: string;
+  data: AgentChartDatum[];
+}
+
+export interface AgentCsvExportSpec {
+  filename: string;
+  title: string;
+  headers: string[];
+  rows: Array<Array<string | number>>;
+  csvContent: string;
+}
+
+export interface AgentPdfReportSpec {
+  filename: string;
+  title: string;
+  subtitle?: string;
+  generatedAt?: string;
+  currencySymbol?: string;
+  kpis?: Array<{ label: string; value: string }>;
+  sections: Array<{
+    heading: string;
+    bullets?: string[];
+    table?: {
+      headers: string[];
+      rows: Array<Array<string | number>>;
+    };
+  }>;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'model';
   text: string;
   timestamp: Date;
   images?: string[];
+  attachmentName?: string;
   groundingUrls?: Array<{title: string, uri: string}>;
   activatedTools?: string[];
   appliedSummary?: string;
+  charts?: AgentChartSpec[];
+  csvExport?: AgentCsvExportSpec;
+  pdfReport?: AgentPdfReportSpec;
+}
+
+export interface ChatSessionRecord {
+  sessionId: string;
+  userId: string;
+  title: string;
+  mode: 'chat' | 'agent' | 'ocr' | 'web';
+  preview?: string;
+  messages: Array<Omit<ChatMessage, 'timestamp'> & { timestamp: string }>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AiSkillRecord {
+  skillId: string;
+  userId: string;
+  name: string;
+  slug: string;
+  source: 'builtin' | 'skills.sh' | 'custom';
+  category: string;
+  description?: string;
+  triggers?: string;
+  instructionsMarkdown: string;
+  author?: string;
+  repo?: string;
+  installs?: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpConnectorRecord {
+  connectorId: string;
+  userId: string;
+  name: string;
+  slug: string;
+  providerType: 'builtin' | 'catalog' | 'custom';
+  category: string;
+  description?: string;
+  endpointUrl?: string;
+  transport: 'builtin' | 'http' | 'sse';
+  authType?: 'none' | 'bearer' | 'api_key';
+  authCredentialMasked?: string;
+  toolsList?: string[];
+  status: 'connected' | 'disconnected' | 'error';
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillsShCatalogItem {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  author: string;
+  repo: string;
+  installs: number;
+  triggers: string;
+  instructionsMarkdown: string;
+  sourceUrl?: string;
 }
 
 export interface Goal {

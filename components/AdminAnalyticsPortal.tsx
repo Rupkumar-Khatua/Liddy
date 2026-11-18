@@ -13,9 +13,11 @@ import {
   AnalyticsEventRecord,
   HyperswitchPaymentRecord,
   IdeationBoardRecord,
+  UserAccessRecord,
 } from '../types';
 import { triggerFileDownload } from '../services/emailReceiptService';
 import { Logo } from './Logo';
+import { AdminAssetsShowcase } from './AdminAssetsShowcase';
 
 interface AnalyticsSummaryResponse {
   totalEvents: number;
@@ -136,7 +138,7 @@ interface SystemStateResponse {
   incidents: ServerIncidentRow[];
 }
 
-type AdminTab = 'overview' | 'payments' | 'users' | 'apis' | 'sockets' | 'database';
+type AdminTab = 'overview' | 'payments' | 'users' | 'apis' | 'sockets' | 'database' | 'assets';
 type DbCollectionKey = 'users' | 'organizations' | 'payments' | 'ideation_boards' | 'admins' | 'platform_config';
 
 interface AdminAnalyticsPortalProps {
@@ -174,6 +176,8 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
     fetchAdminAllowlist,
     addAdminAllowlistEntry,
     removeAdminAllowlistEntry,
+    fetchAdminUserAccess,
+    updateAdminUserAccess,
     payoutConfig,
     updatePayoutConfig,
     aiImageConfig,
@@ -186,10 +190,14 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
   const [summary, setSummary] = useState<AnalyticsSummaryResponse | null>(null);
   const [paymentsList, setPaymentsList] = useState<HyperswitchPaymentRecord[]>([]);
   const [usersList, setUsersList] = useState<AdminUserRow[]>([]);
+  const [userAccessList, setUserAccessList] = useState<UserAccessRecord[]>([]);
   const [boardsList, setBoardsList] = useState<IdeationBoardRecord[]>([]);
   const [adminAllowlist, setAdminAllowlist] = useState<AdminAllowlistRow[]>([]);
   const [systemState, setSystemState] = useState<SystemStateResponse | null>(null);
   const [systemError, setSystemError] = useState<string | null>(null);
+  const [accessTargetInput, setAccessTargetInput] = useState('');
+  const [accessReasonInput, setAccessReasonInput] = useState('');
+  const [accessUpdatingKey, setAccessUpdatingKey] = useState<string | null>(null);
 
   const [paymentRegionFilter, setPaymentRegionFilter] = useState<'ALL' | 'IN' | 'INTL'>('ALL');
   const [apiSearch, setApiSearch] = useState('');
@@ -288,13 +296,14 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
     setSystemError(null);
     try {
       const headers = await getAdminAuthHeaders();
-      const [, summaryResp, loadedPayments, loadedUsers, loadedBoards, loadedAdmins, sysResp] = await Promise.all([
+      const [, summaryResp, loadedPayments, loadedUsers, loadedBoards, loadedAdmins, loadedAccess, sysResp] = await Promise.all([
         refreshOrganizations(),
         fetch('/api/analytics/summary').catch(() => null),
         fetchAdminPayments().catch(() => [] as HyperswitchPaymentRecord[]),
         fetchAdminUsers().catch(() => [] as AdminUserRow[]),
         fetchAdminIdeationBoards().catch(() => [] as IdeationBoardRecord[]),
         fetchAdminAllowlist().catch(() => [] as AdminAllowlistRow[]),
+        fetchAdminUserAccess().catch(() => [] as UserAccessRecord[]),
         fetch('/api/admin/system-state', { headers }).catch(() => null),
       ]);
 
@@ -305,6 +314,7 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
       setUsersList(loadedUsers);
       setBoardsList(loadedBoards);
       setAdminAllowlist(loadedAdmins);
+      setUserAccessList(loadedAccess);
 
       if (sysResp) {
         if (sysResp.ok) {
@@ -326,6 +336,7 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
     fetchAdminUsers,
     fetchAdminIdeationBoards,
     fetchAdminAllowlist,
+    fetchAdminUserAccess,
   ]);
 
   useEffect(() => {
@@ -512,6 +523,40 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
     }
   };
 
+  const handleUserAccessAction = async (
+    action: 'block' | 'unblock' | 'revoke',
+    target: { userId?: string; email?: string; displayName?: string; reason?: string }
+  ) => {
+    const busyKey = target.userId || target.email || 'manual';
+    setAccessUpdatingKey(busyKey);
+    try {
+      const res = await updateAdminUserAccess({
+        action,
+        userId: target.userId,
+        email: target.email,
+        displayName: target.displayName,
+        reason: target.reason,
+      });
+      if (res.ok) {
+        showOpsToast(res.message || `Updated access (${action}).`);
+        await loadConsoleData();
+      } else {
+        showOpsToast(res.error || 'Could not update user access.');
+      }
+    } finally {
+      setAccessUpdatingKey(null);
+    }
+  };
+
+  const userAccessMap = useMemo(() => {
+    const byKey = new Map<string, UserAccessRecord>();
+    userAccessList.forEach((rec) => {
+      if (rec.userId) byKey.set(rec.userId, rec);
+      if (rec.email) byKey.set(rec.email.toLowerCase(), rec);
+    });
+    return byKey;
+  }, [userAccessList]);
+
   const handleExportSnapshot = () => {
     const snapshot = {
       exportedAt: new Date().toISOString(),
@@ -695,6 +740,10 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
               {
                 id: 'database',
                 label: `Database & Failures${openIncidentsCount > 0 ? ` (${openIncidentsCount})` : ''}`,
+              },
+              {
+                id: 'assets',
+                label: 'Assets',
               },
             ] as Array<{ id: AdminTab; label: string }>
           ).map((tab) => (
@@ -1337,13 +1386,13 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
                       onChange={(e) => {
                         const next = e.target.value as 'free' | 'pro' | 'team' | 'enterprise';
                         setOrgPlan(next);
-                        setOrgMrr(next === 'free' ? 0 : next === 'pro' ? 12 : next === 'team' ? 29 : 99);
+                        setOrgMrr(next === 'free' ? 0 : next === 'pro' ? 9 : next === 'team' ? 20 : 99);
                       }}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/15 text-sm text-white outline-none focus:border-sky-400"
                     >
                       <option value="free">Starter Free ($0)</option>
-                      <option value="pro">Liddy Pro ($12)</option>
-                      <option value="team">Team Workspace ($29)</option>
+                      <option value="pro">Liddy Pro ($9/mo)</option>
+                      <option value="team">Annual Pro ($20/yr)</option>
                       <option value="enterprise">Enterprise ($99+)</option>
                     </select>
                   </div>
@@ -1481,11 +1530,68 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
               </div>
             </div>
 
-            {/* Registered Users Directory */}
+            {/* Registered Users Directory & Access Controls */}
             <div className="rounded-3xl bg-neutral-900 border border-white/10 overflow-hidden">
-              <div className="p-6 border-b border-white/10">
-                <h2 className="text-base font-bold">Registered Cloud Users</h2>
-                <p className="text-xs text-neutral-400 mt-0.5">Firebase-authenticated user profiles</p>
+              <div className="p-6 border-b border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-base font-bold">Registered Cloud Users &amp; Access Controls</h2>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Revoke active user sessions immediately or block accounts from accessing the application.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    value={accessTargetInput}
+                    onChange={(e) => setAccessTargetInput(e.target.value)}
+                    placeholder="User Email or UID"
+                    className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/15 text-xs text-white outline-none focus:border-indigo-400 w-48"
+                  />
+                  <input
+                    type="text"
+                    value={accessReasonInput}
+                    onChange={(e) => setAccessReasonInput(e.target.value)}
+                    placeholder="Optional reason"
+                    className="px-3 py-2 rounded-xl bg-neutral-950 border border-white/15 text-xs text-white outline-none focus:border-indigo-400 w-44"
+                  />
+                  <button
+                    type="button"
+                    disabled={!accessTargetInput.trim() || accessUpdatingKey === 'manual'}
+                    onClick={async () => {
+                      const val = accessTargetInput.trim();
+                      const isEmail = val.includes('@');
+                      await handleUserAccessAction('revoke', {
+                        userId: isEmail ? undefined : val,
+                        email: isEmail ? val : undefined,
+                        reason: accessReasonInput.trim() || undefined,
+                      });
+                      setAccessTargetInput('');
+                      setAccessReasonInput('');
+                    }}
+                    className="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/30 text-amber-300 text-xs font-bold cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
+                  >
+                    Revoke Session
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!accessTargetInput.trim() || accessUpdatingKey === 'manual'}
+                    onClick={async () => {
+                      const val = accessTargetInput.trim();
+                      const isEmail = val.includes('@');
+                      await handleUserAccessAction('block', {
+                        userId: isEmail ? undefined : val,
+                        email: isEmail ? val : undefined,
+                        reason: accessReasonInput.trim() || undefined,
+                      });
+                      setAccessTargetInput('');
+                      setAccessReasonInput('');
+                    }}
+                    className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
+                  >
+                    Block User
+                  </button>
+                </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
@@ -1494,31 +1600,142 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
                       <th className="py-3.5 px-6">User Name</th>
                       <th className="py-3.5 px-4">Email</th>
                       <th className="py-3.5 px-4">UID</th>
-                      <th className="py-3.5 px-6">Last Active</th>
+                      <th className="py-3.5 px-4">Status</th>
+                      <th className="py-3.5 px-4">Last Active</th>
+                      <th className="py-3.5 px-6 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/10 text-sm">
                     {usersList.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="py-10 px-6 text-center text-xs text-neutral-500 font-mono">
+                        <td colSpan={6} className="py-10 px-6 text-center text-xs text-neutral-500 font-mono">
                           No user profiles returned yet. Signed-in users sync automatically.
                         </td>
                       </tr>
                     ) : (
-                      usersList.map((u) => (
-                        <tr key={u.userId} className="hover:bg-white/[0.03]">
-                          <td className="py-3.5 px-6 font-semibold">{u.displayName}</td>
-                          <td className="py-3.5 px-4 font-mono text-xs text-sky-400">{u.email || '—'}</td>
-                          <td className="py-3.5 px-4 font-mono text-xs text-neutral-400">{u.userId}</td>
-                          <td className="py-3.5 px-6 font-mono text-xs text-neutral-400">
-                            {u.updatedAt ? new Date(u.updatedAt).toLocaleString() : 'Active'}
-                          </td>
-                        </tr>
-                      ))
+                      usersList.map((u) => {
+                        const accessRec =
+                          userAccessMap.get(u.userId) ||
+                          (u.email ? userAccessMap.get(u.email.toLowerCase()) : undefined);
+                        const status = accessRec?.status || 'active';
+                        const isProtectedOwner =
+                          u.email?.toLowerCase() === PLATFORM_OWNER_EMAIL || u.userId === currentUser?.uid;
+                        const busy = accessUpdatingKey === u.userId;
+
+                        return (
+                          <tr key={u.userId} className="hover:bg-white/[0.03]">
+                            <td className="py-3.5 px-6 font-semibold">{u.displayName}</td>
+                            <td className="py-3.5 px-4 font-mono text-xs text-sky-400">{u.email || '—'}</td>
+                            <td className="py-3.5 px-4 font-mono text-xs text-neutral-400">{u.userId}</td>
+                            <td className="py-3.5 px-4 font-mono text-xs">
+                              {status === 'blocked' ? (
+                                <span className="text-rose-400 font-bold">Blocked</span>
+                              ) : status === 'revoked' ? (
+                                <span className="text-amber-400 font-bold">Revoked</span>
+                              ) : (
+                                <span className="text-emerald-400 font-semibold">Active</span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-4 font-mono text-xs text-neutral-400 tabular-nums">
+                              {u.updatedAt ? new Date(u.updatedAt).toLocaleString() : 'Active'}
+                            </td>
+                            <td className="py-3.5 px-6 text-right">
+                              {isProtectedOwner ? (
+                                <span className="text-[11px] font-mono text-neutral-500">Protected Owner</span>
+                              ) : (
+                                <div className="inline-flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      handleUserAccessAction('revoke', {
+                                        userId: u.userId,
+                                        email: u.email,
+                                        displayName: u.displayName,
+                                      })
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/30 text-amber-300 text-xs font-semibold cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
+                                  >
+                                    Revoke
+                                  </button>
+                                  {status === 'blocked' ? (
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        handleUserAccessAction('unblock', {
+                                          userId: u.userId,
+                                          email: u.email,
+                                          displayName: u.displayName,
+                                        })
+                                      }
+                                      className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/35 border border-emerald-400/30 text-emerald-300 text-xs font-semibold cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
+                                    >
+                                      Unblock
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={() =>
+                                        handleUserAccessAction('block', {
+                                          userId: u.userId,
+                                          email: u.email,
+                                          displayName: u.displayName,
+                                        })
+                                      }
+                                      className="px-2.5 py-1 rounded-lg bg-rose-600/20 hover:bg-rose-600/35 border border-rose-500/30 text-rose-300 text-xs font-semibold cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
+                                    >
+                                      Block
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
               </div>
+
+              {userAccessList.filter((r) => r.status !== 'active').length > 0 && (
+                <div className="p-5 border-t border-white/10 bg-neutral-950/60 space-y-2">
+                  <p className="text-xs font-mono text-neutral-400">
+                    Active Restrictions ({userAccessList.filter((r) => r.status !== 'active').length})
+                  </p>
+                  <div className="divide-y divide-white/10 text-xs">
+                    {userAccessList
+                      .filter((r) => r.status !== 'active')
+                      .map((r) => (
+                        <div key={r.userId} className="py-2 flex flex-wrap items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <span className={r.status === 'blocked' ? 'text-rose-400 font-bold mr-2' : 'text-amber-400 font-bold mr-2'}>
+                              {r.status.toUpperCase()}
+                            </span>
+                            <span className="font-mono text-white">{r.email || r.userId}</span>
+                            {r.reason && <span className="text-neutral-400 ml-2">&middot; {r.reason}</span>}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={accessUpdatingKey === r.userId}
+                            onClick={() =>
+                              handleUserAccessAction('unblock', {
+                                userId: r.userId,
+                                email: r.email,
+                                displayName: r.displayName,
+                              })
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/15 text-white font-semibold cursor-pointer whitespace-nowrap shrink-0"
+                          >
+                            Restore Access
+                          </button>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Admin Allowlist Provisioning */}
@@ -2378,6 +2595,8 @@ export const AdminAnalyticsPortal: React.FC<AdminAnalyticsPortalProps> = ({
             </div>
           </div>
         )}
+
+        {activeTab === 'assets' && <AdminAssetsShowcase />}
       </main>
     </div>
   );

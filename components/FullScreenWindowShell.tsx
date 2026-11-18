@@ -111,8 +111,7 @@ export const FullScreenWindowShell: React.FC<FullScreenWindowShellProps> = ({
   };
 
   const cycleTheme = () => {
-    const next = themeMode === 'light' ? 'dark' : themeMode === 'dark' ? 'system' : 'light';
-    setThemeMode(next);
+    setThemeMode(themeMode === 'dark' ? 'light' : 'dark');
   };
 
   return (

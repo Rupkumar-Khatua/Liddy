@@ -2,12 +2,14 @@ import React from 'react';
 import { ThreeLogoCanvas } from './ThreeLogoCanvas';
 import { Logo } from './Logo';
 import { WindowId } from '../types';
+import { useFinMind } from '../context/FinMindContext';
 
 interface SystemFooterProps {
   onNavigateWindow: (windowId: WindowId) => void;
 }
 
 export const SystemFooter: React.FC<SystemFooterProps> = ({ onNavigateWindow }) => {
+  const { paymentRegion } = useFinMind();
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -27,7 +29,7 @@ export const SystemFooter: React.FC<SystemFooterProps> = ({ onNavigateWindow }) 
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateWindow('overview')}
+                  onClick={() => onNavigateWindow('expenses')}
                   className="hover:text-indigo-600 dark:hover:text-sky-400 transition-colors text-left cursor-pointer"
                 >
                   Personal Expenses &amp; Spending
@@ -83,16 +85,16 @@ export const SystemFooter: React.FC<SystemFooterProps> = ({ onNavigateWindow }) 
                   onClick={() => onNavigateWindow('scanner')}
                   className="hover:text-indigo-600 dark:hover:text-sky-400 transition-colors text-left cursor-pointer"
                 >
-                  Instant Receipt Capture (AI)
+                  Paper Bill &rarr; Digital OCR
                 </button>
               </li>
               <li>
                 <button
                   type="button"
-                  onClick={() => onNavigateWindow('scanner')}
+                  onClick={() => onNavigateWindow('expenses')}
                   className="hover:text-indigo-600 dark:hover:text-sky-400 transition-colors text-left cursor-pointer"
                 >
-                  Expense &amp; Bill Ledger
+                  Personal Expense Ledger
                 </button>
               </li>
               <li>
@@ -101,7 +103,7 @@ export const SystemFooter: React.FC<SystemFooterProps> = ({ onNavigateWindow }) 
                   onClick={() => onNavigateWindow('invoices')}
                   className="hover:text-indigo-600 dark:hover:text-sky-400 transition-colors text-left cursor-pointer"
                 >
-                  UPI QR &amp; Gmail Receipts
+                  {paymentRegion === 'IN' ? 'UPI QR & Gmail Receipts' : 'PayPal Links & Gmail Receipts'}
                 </button>
               </li>
             </ul>
@@ -162,7 +164,7 @@ export const SystemFooter: React.FC<SystemFooterProps> = ({ onNavigateWindow }) 
                   onClick={() => onNavigateWindow('pricing')}
                   className="hover:text-indigo-600 dark:hover:text-sky-400 transition-colors text-left cursor-pointer"
                 >
-                  Liddy Pro &amp; Team Plans
+                  Free, Day Pass &amp; Pro Plans
                 </button>
               </li>
               <li>

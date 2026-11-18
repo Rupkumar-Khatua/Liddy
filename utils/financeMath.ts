@@ -1,70 +1,83 @@
 import { PlanTier, InvoiceLineItem, PaymentRegion, BillingCycle, PaymentRail } from '../types';
 
+export const FREE_FEATURE_TRY_LIMIT = 5;
+
+export const FIXED_REGIONAL_PRICING = {
+  IN: {
+    currency: 'INR' as const,
+    symbol: '₹' as const,
+    day: 49,
+    monthly: 149,
+    annual: 999,
+  },
+  INTL: {
+    currency: 'USD' as const,
+    symbol: '$' as const,
+    day: 2,
+    monthly: 9,
+    annual: 20,
+  },
+};
+
 export const PLAN_CATALOG: Record<PlanTier, {
   id: PlanTier;
   name: string;
+  dailyUsd?: number;
+  dailyInr?: number;
   monthlyUsd: number;
-  annualMonthlyUsd: number;
+  annualTotalUsd: number;
   monthlyInr: number;
-  annualMonthlyInr: number;
+  annualTotalInr: number;
   tagline: string;
-  invoiceLimitLabel: string;
-  scanLimitLabel: string;
-  collaborationLabel: string;
+  quotaLabel: string;
   features: string[];
 }> = {
   free: {
     id: 'free',
     name: 'Starter Free',
     monthlyUsd: 0,
-    annualMonthlyUsd: 0,
+    annualTotalUsd: 0,
     monthlyInr: 0,
-    annualMonthlyInr: 0,
-    tagline: 'Everything you need daily to track expenses, stocks, bills and market news.',
-    invoiceLimitLabel: '10 formatted invoices / mo',
-    scanLimitLabel: '15 smart receipt scans / mo',
-    collaborationLabel: '1 shared Vision board & video room',
+    annualTotalInr: 0,
+    tagline: 'Dashboard, daily expense tracking & stock portfolio open forever, plus 5 AI & Studio tries.',
+    quotaLabel: '5 AI & Studio tries total',
     features: [
-      'Personal expense tracker & connected stock portfolio card',
-      'Formatted A4, Letter & 80mm thermal invoices + UPI QR',
-      'Live global market updates & financial news feed',
-      'Smart receipt scanner, Liddy Advisor & Voice guide',
+      'Always-open Dashboard, daily spends & stock portfolio tracking',
+      '5 free tries across Liddy AI, Vision Studio, Slides & Receipt OCR',
+      'Live market overview & personal category breakdown',
+    ],
+  },
+  day: {
+    id: 'day',
+    name: '1-Day Unlimited Pass',
+    dailyUsd: FIXED_REGIONAL_PRICING.INTL.day,
+    dailyInr: FIXED_REGIONAL_PRICING.IN.day,
+    monthlyUsd: FIXED_REGIONAL_PRICING.INTL.day,
+    annualTotalUsd: FIXED_REGIONAL_PRICING.INTL.day,
+    monthlyInr: FIXED_REGIONAL_PRICING.IN.day,
+    annualTotalInr: FIXED_REGIONAL_PRICING.IN.day,
+    tagline: 'Full unlimited workspace access for 24 hours with zero recurring commitment.',
+    quotaLabel: '24h unlimited access',
+    features: [
+      'Unlimited Liddy AI Chat, Financial Agent & Voice sessions for 24h',
+      'Unlimited Vision Mind Maps, HTML Slides & HD Video Rooms',
+      'Unlimited Receipt-to-Digital-Bill OCR & all Swiss templates',
     ],
   },
   pro: {
     id: 'pro',
     name: 'Liddy Pro',
-    monthlyUsd: 12,
-    annualMonthlyUsd: 9,
-    monthlyInr: 999,
-    annualMonthlyInr: 749,
-    tagline: 'Ad-free daily money control, unlimited invoices, email receipts and smart planning.',
-    invoiceLimitLabel: 'Unlimited invoices & custom branding',
-    scanLimitLabel: 'Unlimited receipt & statement scans',
-    collaborationLabel: 'Unlimited Vision boards, slides & PDF exports',
+    monthlyUsd: FIXED_REGIONAL_PRICING.INTL.monthly,
+    annualTotalUsd: FIXED_REGIONAL_PRICING.INTL.annual,
+    monthlyInr: FIXED_REGIONAL_PRICING.IN.monthly,
+    annualTotalInr: FIXED_REGIONAL_PRICING.IN.annual,
+    tagline: 'Unlimited AI CFO, Vision Studio, Slides & Clean Swiss Paper Invoicing.',
+    quotaLabel: 'Unlimited everything',
     features: [
-      '100% Ad-free workspace across web and mobile',
-      'Unlimited multi-format invoices & direct Gmail receipts',
-      'PowerPoint, PDF & Markdown exports from Vision Studio',
-      'Savings goals, portfolio tracking & daily cashflow guidance',
-    ],
-  },
-  team: {
-    id: 'team',
-    name: 'Team Plan',
-    monthlyUsd: 29,
-    annualMonthlyUsd: 24,
-    monthlyInr: 2499,
-    annualMonthlyInr: 1999,
-    tagline: 'Shared financial & creative workspace with live HD video rooms for teams and families.',
-    invoiceLimitLabel: 'Unlimited + 5 shared seats',
-    scanLimitLabel: 'Unlimited shared receipt archive',
-    collaborationLabel: 'HD video conferencing, screen share & live boards',
-    features: [
-      'Everything in Liddy Pro for up to 5 members',
-      'Live HD video, audio & screen-share collaboration rooms',
-      'Shared boards, synced meeting notes & decisions archive',
-      'Priority support & verified payment history',
+      'Unlimited Liddy AI Financial Agent, OCR & autonomous ledger tools',
+      'Unlimited Clean Swiss Paper Invoices & Bill-to-Digital templates',
+      'Unlimited Mind Maps, Gamma-style HTML Decks & HD Video Calls',
+      '100% ad-free workspace with priority email receipts',
     ],
   },
 };
@@ -81,13 +94,13 @@ export const REGIONAL_PAYMENT_OPTIONS: Record<PaymentRegion, RegionalPaymentOpti
     {
       rail: 'UPI_QR',
       label: 'UPI QR Scan',
-      subtitle: 'GPay, PhonePe, Paytm and BHIM · Instant',
+      subtitle: 'GPay, PhonePe, Paytm and BHIM in INR',
       connector: 'in_upi_qr',
     },
     {
       rail: 'UPI_ID',
       label: 'UPI ID / Handle',
-      subtitle: 'Pay via @okicici, @okaxis or @ybl handle',
+      subtitle: 'Pay via @okicici, @okaxis or @ybl in INR',
       connector: 'in_upi_collect',
     },
   ],
@@ -95,7 +108,7 @@ export const REGIONAL_PAYMENT_OPTIONS: Record<PaymentRegion, RegionalPaymentOpti
     {
       rail: 'PAYPAL',
       label: 'PayPal',
-      subtitle: 'Fast international checkout via PayPal balance or bank',
+      subtitle: 'PayPal balance or card in USD',
       connector: 'paypal_checkout',
     },
   ],
@@ -148,16 +161,6 @@ export function shouldShowAdsForPlan(planTier: PlanTier, adFreeOverride?: boolea
   return planTier === 'free';
 }
 
-export function getPlanMonthlyPriceUsd(planTier: PlanTier, billingCycle: BillingCycle = 'monthly'): number {
-  const plan = PLAN_CATALOG[planTier] || PLAN_CATALOG.free;
-  return billingCycle === 'annual' ? plan.annualMonthlyUsd : plan.monthlyUsd;
-}
-
-export function getPlanMonthlyPriceInr(planTier: PlanTier, billingCycle: BillingCycle = 'monthly'): number {
-  const plan = PLAN_CATALOG[planTier] || PLAN_CATALOG.free;
-  return billingCycle === 'annual' ? plan.annualMonthlyInr : plan.monthlyInr;
-}
-
 export function getPlanCheckoutCharge(
   planTier: PlanTier,
   billingCycle: BillingCycle,
@@ -165,28 +168,44 @@ export function getPlanCheckoutCharge(
 ): {
   currency: 'INR' | 'USD';
   symbol: '₹' | '$';
-  monthlyPrice: number;
   totalCharge: number;
   usdEquivalent: number;
+  cycleLabel: string;
 } {
-  const monthlyUsd = getPlanMonthlyPriceUsd(planTier, billingCycle);
-  const monthlyInr = getPlanMonthlyPriceInr(planTier, billingCycle);
-  const multiplier = billingCycle === 'annual' ? 12 : 1;
+  let usd = 0;
+  let inr = 0;
+  let cycleLabel = 'Free';
+
+  if (planTier === 'day' || billingCycle === 'daily') {
+    usd = FIXED_REGIONAL_PRICING.INTL.day;
+    inr = FIXED_REGIONAL_PRICING.IN.day;
+    cycleLabel = '24 Hours Unlimited';
+  } else if (planTier === 'pro') {
+    if (billingCycle === 'annual') {
+      usd = FIXED_REGIONAL_PRICING.INTL.annual;
+      inr = FIXED_REGIONAL_PRICING.IN.annual;
+      cycleLabel = '1 Year Unlimited';
+    } else {
+      usd = FIXED_REGIONAL_PRICING.INTL.monthly;
+      inr = FIXED_REGIONAL_PRICING.IN.monthly;
+      cycleLabel = '1 Month Unlimited';
+    }
+  }
 
   if (region === 'IN') {
     return {
       currency: 'INR',
       symbol: '₹',
-      monthlyPrice: monthlyInr,
-      totalCharge: monthlyInr * multiplier,
-      usdEquivalent: monthlyUsd * multiplier,
+      totalCharge: inr,
+      usdEquivalent: usd,
+      cycleLabel,
     };
   }
   return {
     currency: 'USD',
     symbol: '$',
-    monthlyPrice: monthlyUsd,
-    totalCharge: monthlyUsd * multiplier,
-    usdEquivalent: monthlyUsd * multiplier,
+    totalCharge: usd,
+    usdEquivalent: usd,
+    cycleLabel,
   };
 }

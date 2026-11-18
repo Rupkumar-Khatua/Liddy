@@ -10,74 +10,83 @@ interface LandingPageProps {
   onNavigateWindow: (windowId: WindowId) => void;
 }
 
-const FEATURE_STRIP_ITEMS: Array<{
+const getFeatureStripItems = (paymentRegion: 'IN' | 'INTL'): Array<{
   num: string;
   windowId: WindowId;
   title: string;
   meta: string;
   summary: string;
   accentGradient: string;
-}> = [
-  {
-    num: '01',
-    windowId: 'overview',
-    title: 'Daily Money Overview',
-    meta: 'Expenses · Stocks · Bills',
-    summary: 'See every personal expense, your connected stock broker balance and pending invoices side by side.',
-    accentGradient: 'from-indigo-500 to-violet-500',
-  },
-  {
-    num: '02',
-    windowId: 'invoices',
-    title: 'Multi-Format Invoicing',
-    meta: 'A4 · Letter · 80mm POS',
-    summary: 'Three structured invoice templates, instant preview, print/PDF export, UPI QR and email receipts.',
-    accentGradient: 'from-emerald-500 to-teal-500',
-  },
-  {
-    num: '03',
-    windowId: 'scanner',
-    title: 'Receipt Scanner',
-    meta: 'Instant Expense Capture',
-    summary: 'Snap grocery, dining, utility or travel receipts straight into your categorized spending ledger.',
-    accentGradient: 'from-sky-500 to-cyan-500',
-  },
-  {
-    num: '04',
-    windowId: 'markets',
-    title: 'Live Market & News Wire',
-    meta: 'Global Streaming',
-    summary: 'Breaking financial headlines, interest rate updates and live US & India stock market quotes.',
-    accentGradient: 'from-amber-500 to-orange-500',
-  },
-  {
-    num: '05',
-    windowId: 'agent',
-    title: 'AI Finance Agent',
-    meta: 'Personal Guide + Voice',
-    summary: 'Ask budgeting, stock, bill or tax questions by chat or hands-free voice anytime.',
-    accentGradient: 'from-fuchsia-500 to-indigo-500',
-  },
-  {
-    num: '06',
-    windowId: 'vision',
-    title: 'Vision Studio & Video',
-    meta: 'Mind Map · Decks · Video',
-    summary: 'Host live video & screen-share rooms, map ideas together and export PowerPoint, PDF or Markdown.',
-    accentGradient: 'from-rose-500 to-pink-500',
-  },
-  {
-    num: '07',
-    windowId: 'pricing',
-    title: 'Global & India Plans',
-    meta: 'UPI · PayPal',
-    summary: 'Start free forever or upgrade securely via verified multi-currency checkout with instant email receipts.',
-    accentGradient: 'from-violet-500 to-purple-500',
-  },
-];
+}> => {
+  const isIndia = paymentRegion === 'IN';
+  return [
+    {
+      num: '01',
+      windowId: 'overview',
+      title: 'Daily Money Overview',
+      meta: 'Expenses · Stocks · Bills',
+      summary: 'See every personal expense, your connected stock broker balance and pending invoices side by side.',
+      accentGradient: 'from-indigo-500 to-violet-500',
+    },
+    {
+      num: '02',
+      windowId: 'invoices',
+      title: 'Swiss Invoice & Bill Studio',
+      meta: '5 Templates · Bill OCR',
+      summary: '5 Clean Swiss Paper templates, A4/Letter/80mm print and paper-to-digital bill OCR.',
+      accentGradient: 'from-emerald-500 to-teal-500',
+    },
+    {
+      num: '03',
+      windowId: 'expenses',
+      title: 'Personal Expenses',
+      meta: 'Where You Spent What',
+      summary: isIndia
+        ? 'Categorize daily cash, card and UPI spending cleanly inside your personal ledger.'
+        : 'Categorize daily cash, card and PayPal spending cleanly inside your personal ledger.',
+      accentGradient: 'from-sky-500 to-cyan-500',
+    },
+    {
+      num: '04',
+      windowId: 'markets',
+      title: 'Live Market & News Wire',
+      meta: 'Global Streaming',
+      summary: 'Breaking financial headlines, interest rate updates and live US & India stock quotes.',
+      accentGradient: 'from-amber-500 to-orange-500',
+    },
+    {
+      num: '05',
+      windowId: 'agent',
+      title: 'Liddy AI Guide',
+      meta: 'Chat · Agent · Voice',
+      summary: 'Ask budgeting, stock, bill or tax questions by chat, autonomous financial tools or voice.',
+      accentGradient: 'from-fuchsia-500 to-indigo-500',
+    },
+    {
+      num: '06',
+      windowId: 'vision',
+      title: 'Vision Studio & Video',
+      meta: 'Mind Map · HTML Decks · Call',
+      summary: 'Host live video rooms, map ideas freely and export interactive .html slide decks.',
+      accentGradient: 'from-rose-500 to-pink-500',
+    },
+    {
+      num: '07',
+      windowId: 'pricing',
+      title: isIndia ? 'India Access Plans' : 'Global Access Plans',
+      meta: isIndia ? '₹49 · ₹149 · ₹999' : '$2 · $9 · $20',
+      summary: isIndia
+        ? 'Free dashboard with 5 AI tries, ₹49 Day Pass, ₹149/mo or ₹999/yr via instant UPI.'
+        : 'Free dashboard with 5 AI tries, $2 Day Pass, $9/mo or $20/yr via PayPal.',
+      accentGradient: 'from-violet-500 to-purple-500',
+    },
+  ];
+};
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) => {
-  const { planTier } = useFinMind();
+  const { planTier, paymentRegion } = useFinMind();
+  const isIndia = paymentRegion === 'IN';
+  const featureStripItems = getFeatureStripItems(paymentRegion);
   const [heroImgFailed, setHeroImgFailed] = useState(false);
   const [invImgFailed, setInvImgFailed] = useState(false);
   const [newsImgFailed, setNewsImgFailed] = useState(false);
@@ -100,7 +109,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
             </h1>
 
             <p className="text-base sm:text-lg text-neutral-600 dark:text-neutral-300 leading-relaxed max-w-xl">
-              Track everyday spending, follow live markets, issue ready-to-print invoices with UPI QR links and collaborate in live video rooms.
+              {isIndia
+                ? 'Track everyday spending, follow live markets, issue ready-to-print invoices with UPI QR links and collaborate in live video rooms.'
+                : 'Track everyday spending, follow live markets, issue ready-to-print invoices with PayPal links and collaborate in live video rooms.'}
             </p>
 
             <div className="flex flex-wrap items-center gap-4 pt-2">
@@ -178,7 +189,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
                   aria-hidden={passIndex === 1}
                   className="flex items-stretch gap-4 shrink-0"
                 >
-                  {FEATURE_STRIP_ITEMS.map((item) => (
+                  {featureStripItems.map((item) => (
                     <button
                       key={`${passIndex}-${item.windowId}`}
                       type="button"
@@ -246,23 +257,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
             >
               <div className="p-7 space-y-3">
                 <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">
-                  Invoicing &amp; UPI QR
+                  {isIndia ? 'Invoicing & UPI QR' : 'Invoicing & PayPal'}
                 </p>
                 <h3 className="text-2xl font-extrabold group-hover:text-indigo-600 dark:group-hover:text-sky-400 transition-colors">
-                  Print-Ready Invoices with UPI QR &amp; Email Receipts
+                  Swiss Paper Invoices &amp; Bill-to-Digital Studio
                 </h3>
                 <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed max-w-xl">
-                  Pick a layout, preview A4, Letter or thermal pages before exporting and let clients pay via your own UPI QR.
+                  Choose from 5 Clean Swiss Paper templates across A4, Letter and 80mm, or convert any paper bill via OCR into a downloadable digital invoice.
                 </p>
                 <span className="inline-block text-xs font-bold text-indigo-600 dark:text-sky-400 pt-1">
-                  Open Invoices &rarr;
+                  Open Invoices Studio &rarr;
                 </span>
               </div>
               <div className="h-56 w-full overflow-hidden border-t border-neutral-200/70 dark:border-neutral-800 bg-neutral-100 dark:bg-neutral-950">
                 {!invImgFailed ? (
                   <img
                     src={STUDIO_MEDIA.featureInvoicingDesk}
-                    alt="Digital invoicing and UPI checkout workspace"
+                    alt={isIndia ? 'Digital invoicing and UPI checkout workspace' : 'Digital invoicing and PayPal checkout workspace'}
                     referrerPolicy="no-referrer"
                     onError={() => setInvImgFailed(true)}
                     className="w-full h-full object-cover group-hover:scale-[1.02] transition-transform duration-300"
@@ -308,10 +319,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
               onClick={() => onNavigateWindow('vision')}
               className="lg:col-span-4 glass-card dark:bg-neutral-900/90 border border-neutral-200/80 dark:border-neutral-800 rounded-3xl p-7 text-left space-y-3 cursor-pointer"
             >
-              <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">Mind Map · PPTX · Video</p>
+              <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">Mind Map · HTML Decks · Video</p>
               <h3 className="text-xl font-extrabold">Creative Studio &amp; Live Video Rooms</h3>
               <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Brainstorm visual mind maps, export PPTX or PDF decks and jump into live video, audio &amp; screen-share calls with anyone.
+                Map ideas freely on an expandable canvas, export interactive HTML slide decks and host live video calls.
               </p>
               <span className="inline-block text-xs font-bold text-indigo-600 dark:text-sky-400">
                 Launch Studio &rarr;
@@ -320,16 +331,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
 
             <button
               type="button"
-              onClick={() => onNavigateWindow('scanner')}
+              onClick={() => onNavigateWindow('expenses')}
               className="lg:col-span-4 glass-card dark:bg-neutral-900/90 border border-neutral-200/80 dark:border-neutral-800 rounded-3xl p-7 text-left space-y-3 cursor-pointer"
             >
-              <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">Receipt AI</p>
-              <h3 className="text-xl font-extrabold">Instant Expense Capture</h3>
+              <p className="text-xs font-mono text-neutral-500 dark:text-neutral-400">Personal Spending</p>
+              <h3 className="text-xl font-extrabold">Where You Spent What</h3>
               <p className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Snap or upload coffee, grocery, shopping or travel receipts—AI logs every spend neatly into your daily ledger.
+                {isIndia
+                  ? 'Track daily expenses across categories, inspect recurring bills and log manual cash or UPI payments anytime.'
+                  : 'Track daily expenses across categories, inspect recurring bills and log manual cash, card or PayPal payments anytime.'}
               </p>
               <span className="inline-block text-xs font-bold text-indigo-600 dark:text-sky-400">
-                Open Scanner &rarr;
+                Open Expenses &rarr;
               </span>
             </button>
 
@@ -388,14 +401,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
           <div className="lg:col-span-7 rounded-3xl bg-neutral-950 text-white border border-white/10 p-7 flex flex-col justify-between gap-6">
             <div className="space-y-2">
               <div className="flex items-center justify-between text-xs font-mono text-sky-400">
-                <span>India UPI + International PayPal</span>
+                <span>{isIndia ? 'India UPI Billing' : 'International PayPal Billing'}</span>
                 <span>Current Plan: {planTier.toUpperCase()}</span>
               </div>
               <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-                Start Free Forever. Upgrade with Verified UPI or PayPal.
+                Free Daily Workspace. Flexible Day Pass, Monthly or Yearly Pro.
               </h3>
               <p className="text-sm text-neutral-300 leading-relaxed">
-                Starter Free includes personal expense tracking, stock broker balance updates, 10 invoices/month and live market news. Liddy Pro ($12/mo or &#8377;999/mo) unlocks unlimited invoices, Gmail receipts, PPTX/PDF exports and zero ads.
+                {isIndia
+                  ? 'Starter Free keeps your Dashboard, daily expense log and stock portfolio open forever plus 5 free tries across AI & Studio tools. Unlock unlimited access anytime with ₹49 Day Pass, ₹149/mo or ₹999/yr via instant UPI.'
+                  : 'Starter Free keeps your Dashboard, daily expense log and stock portfolio open forever plus 5 free tries across AI & Studio tools. Unlock unlimited access anytime with $2 Day Pass, $9/mo or $20/yr via PayPal.'}
               </p>
             </div>
 
@@ -403,12 +418,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
               <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
                 <p className="font-mono text-sky-400">Verified Checkout</p>
                 <p className="font-bold text-sm mt-1">Instant Invoice via Gmail</p>
-                <p className="text-neutral-400 mt-1">Every confirmed payment delivers a formatted invoice receipt directly to your inbox.</p>
+                <p className="text-neutral-400 mt-1">
+                  {isIndia
+                    ? 'Every confirmed UPI order delivers a formatted invoice receipt.'
+                    : 'Every confirmed PayPal order delivers a formatted invoice receipt.'}
+                </p>
               </div>
               <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
-                <p className="font-mono text-emerald-400">Multi-Format Export</p>
-                <p className="font-bold text-sm mt-1">A4, Letter &amp; 80mm POS</p>
-                <p className="text-neutral-400 mt-1">Preview and print professional receipts across 3 paper sizes and 3 design themes.</p>
+                <p className="font-mono text-emerald-400">Clean Swiss Studio</p>
+                <p className="font-bold text-sm mt-1">5 Templates · A4, Letter &amp; 80mm</p>
+                <p className="text-neutral-400 mt-1">Create invoices or convert paper bills to digital across 5 Swiss templates.</p>
               </div>
             </div>
 
@@ -466,16 +485,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onNavigateWindow }) =>
                 Which payment methods and receipts are supported?
               </dt>
               <dd className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Checkout verifies payments across India via UPI (UPI QR &amp; UPI ID) and International regions via PayPal and delivers a formatted invoice via Gmail or downloadable receipt.
+                {isIndia
+                  ? 'Checkout verifies payments seamlessly via UPI (UPI QR & UPI ID) in INR and delivers a formatted invoice via Gmail or downloadable receipt.'
+                  : 'Checkout verifies payments seamlessly via PayPal in USD and delivers a formatted invoice via Gmail or downloadable receipt.'}
               </dd>
             </div>
 
             <div className="glass-card dark:bg-neutral-900/90 border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-6 space-y-2">
               <dt className="text-base font-bold text-neutral-900 dark:text-white">
-                What can teams do inside the Creative Studio?
+                What can you create inside Vision Studio?
               </dt>
               <dd className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed">
-                Create interactive mind maps, author slide presentations exported to PowerPoint, PDF or Markdown and connect face-to-face inside live HD video, voice and screen-share conference rooms.
+                Map ideas on an interactive canvas, design Clean Swiss Paper presentations downloadable as self-contained .html decks and host live HD video &amp; screen-share rooms.
               </dd>
             </div>
           </dl>

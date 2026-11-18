@@ -13,6 +13,10 @@ import {
   MerchantPayoutConfig,
   AiImageConfig,
   AgentLedgerOperations,
+  UserAccessRecord,
+  UserAccessStatus,
+  BillingCycle,
+  PaymentRegion,
 } from '../types';
 import { auth, db, logout, OperationType, handleFirestoreError } from '../firebase';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -33,7 +37,9 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { SUPPORTED_LANGUAGES, getTranslation, triggerGlobalTranslation } from '../services/localization';
-import { shouldShowAdsForPlan } from '../utils/financeMath';
+import { FREE_FEATURE_TRY_LIMIT, shouldShowAdsForPlan } from '../utils/financeMath';
+import { fetchDetectedRegion } from '../services/geminiService';
+import { parsePathToWindow, parseRegionFromPath, windowToPath } from '../utils/router';
 
 export interface LiddyUser {
   uid?: string;
@@ -64,6 +70,7 @@ interface FinMindContextType extends AppState {
   remainingGuestActions: number;
   engagementCount: number;
   freeTierActionCount: number;
+  freeTriesRemaining: number;
   isUpgradeModalOpen: boolean;
   upgradeModalReason: string;
   openUpgradeModal: (reason?: string) => void;
@@ -71,11 +78,12 @@ interface FinMindContextType extends AppState {
 
   // Monetization, Payments & Entitlements
   planTier: PlanTier;
+  planExpiresAt: string | null;
   adFree: boolean;
   showAds: boolean;
   organizationId: string;
   payments: HyperswitchPaymentRecord[];
-  upgradePlan: (tier: PlanTier) => Promise<void>;
+  upgradePlan: (tier: PlanTier, billingCycle?: BillingCycle) => Promise<void>;
   recordGatewayPayment: (payment: HyperswitchPaymentRecord) => Promise<void>;
   logAnalyticsEvent: (
     eventType: AnalyticsEventType,
@@ -105,6 +113,17 @@ interface FinMindContextType extends AppState {
   fetchAdminAllowlist: () => Promise<Array<{ userId: string; email: string; role: 'owner' | 'admin'; createdAt?: string }>>;
   addAdminAllowlistEntry: (userId: string, email: string, role?: 'admin' | 'owner') => Promise<void>;
   removeAdminAllowlistEntry: (userId: string) => Promise<void>;
+  accountAccessStatus: UserAccessStatus;
+  accountAccessReason: string;
+  clearAccountAccessNotice: () => void;
+  fetchAdminUserAccess: () => Promise<UserAccessRecord[]>;
+  updateAdminUserAccess: (params: {
+    action: 'block' | 'unblock' | 'revoke';
+    userId?: string;
+    email?: string;
+    displayName?: string;
+    reason?: string;
+  }) => Promise<{ ok: boolean; error?: string; message?: string }>;
   reportClientFailure: (subsystem: string, source: string, message: string) => void;
 
   // Transactions & Invoices Operations
@@ -149,6 +168,8 @@ interface FinMindContextType extends AppState {
   updateAiImageConfig: (next: AiImageConfig) => Promise<{ ok: boolean; error?: string }>;
 
   // Currency & Formatting
+  paymentRegion: PaymentRegion;
+  setPaymentRegion: (region: PaymentRegion, persist?: boolean) => void;
   currencySymbol: string;
   setCurrencySymbol: (sym: string) => void;
   currencyPlacement: CurrencyPlacement;
@@ -194,7 +215,10 @@ function buildTransactionPayload(userId: string, t: Transaction, isCreate: boole
   if (isCreate) {
     payload.createdAt = serverTimestamp();
   }
-  if (t.paymentMethod && ['UPI', 'CARD', 'CASH', 'SCAN_RECEIPT', 'INVOICE'].includes(t.paymentMethod)) {
+  if (
+    t.paymentMethod &&
+    ['UPI', 'CARD', 'CASH', 'SCAN_RECEIPT', 'INVOICE', 'PAYPAL'].includes(t.paymentMethod)
+  ) {
     payload.paymentMethod = t.paymentMethod;
   }
   if (t.invoiceId) payload.invoiceId = String(t.invoiceId).slice(0, 128);
@@ -241,7 +265,7 @@ function buildInvoicePayload(userId: string, inv: Invoice, isCreate: boolean) {
   if (inv.clientDetails) payload.clientDetails = String(inv.clientDetails).slice(0, 400);
   if (inv.clientEmail) payload.clientEmail = String(inv.clientEmail).slice(0, 254);
   if (inv.clientTaxId) payload.clientTaxId = String(inv.clientTaxId).slice(0, 64);
-  if (inv.templateStyle && ['classic', 'minimal', 'corporate'].includes(inv.templateStyle)) {
+  if (inv.templateStyle && ['swiss', 'classic', 'minimal', 'corporate', 'executive'].includes(inv.templateStyle)) {
     payload.templateStyle = inv.templateStyle;
   }
   if (inv.paperFormat && ['a4', 'letter', 'thermal80'].includes(inv.paperFormat)) {
@@ -250,6 +274,8 @@ function buildInvoicePayload(userId: string, inv: Invoice, isCreate: boolean) {
   if (inv.notes) payload.notes = String(inv.notes).slice(0, 600);
   if (inv.upiId) payload.upiId = String(inv.upiId).slice(0, 120);
   if (inv.payeeName) payload.payeeName = String(inv.payeeName).slice(0, 120);
+  if (inv.paypalId) payload.paypalId = String(inv.paypalId).slice(0, 254);
+  if (inv.paymentRegion === 'IN' || inv.paymentRegion === 'INTL') payload.paymentRegion = inv.paymentRegion;
   if (inv.paidAt) payload.paidAt = String(inv.paidAt).slice(0, 64);
   return payload;
 }
@@ -265,6 +291,26 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
   });
   const [firebaseUid, setFirebaseUid] = useState<string | null>(null);
   const [isAdminDocVerified, setIsAdminDocVerified] = useState(false);
+  const [accountAccessStatus, setAccountAccessStatus] = useState<UserAccessStatus>(() => {
+    try {
+      const saved = localStorage.getItem('liddy_account_blocked_state');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.status === 'blocked') return 'blocked';
+      }
+    } catch {}
+    return 'active';
+  });
+  const [accountAccessReason, setAccountAccessReason] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('liddy_account_blocked_state');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return String(parsed?.reason || '');
+      }
+    } catch {}
+    return '';
+  });
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalReason, setAuthModalReason] = useState('Liddy Workspace');
@@ -273,9 +319,22 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Plan & Monetization Preferences
+  const [planExpiresAt, setPlanExpiresAtState] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('liddy_plan_expires_at') || null;
+    } catch {
+      return null;
+    }
+  });
   const [planTier, setPlanTierState] = useState<PlanTier>(() => {
     const saved = localStorage.getItem('liddy_plan_tier');
-    return saved === 'pro' || saved === 'team' ? saved : 'free';
+    const exp = localStorage.getItem('liddy_plan_expires_at');
+    if (saved === 'day') {
+      if (exp && Date.now() < Date.parse(exp)) return 'day';
+      return 'free';
+    }
+    if (saved === 'pro' || saved === 'team') return 'pro';
+    return 'free';
   });
   const [adFree, setAdFreeState] = useState<boolean>(() => {
     return localStorage.getItem('liddy_ad_free') === 'true';
@@ -295,7 +354,12 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Settings: Theme & Accessibility
   const [themeMode, setThemeModeState] = useState<ThemeMode>(() => {
-    return (localStorage.getItem('liddy_theme_mode') as ThemeMode) || 'system';
+    try {
+      const saved = localStorage.getItem('liddy_theme_mode');
+      return saved === 'dark' || saved === 'light' ? saved : 'light';
+    } catch {
+      return 'light';
+    }
   });
 
   const [highContrast, setHighContrastState] = useState<boolean>(() => {
@@ -306,9 +370,99 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return localStorage.getItem('liddy_reduced_motion') === 'true';
   });
 
-  // Settings: Currency
+  // Settings: Region & Currency
+  const [paymentRegion, setPaymentRegionState] = useState<PaymentRegion>(() => {
+    try {
+      const pathRegion = parseRegionFromPath(window.location.pathname);
+      if (pathRegion) return pathRegion;
+      const saved = localStorage.getItem('liddy_payment_region');
+      if (saved === 'IN' || saved === 'INTL') return saved;
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      if (/kolkata|calcutta|india/i.test(tz)) return 'IN';
+    } catch {}
+    return 'INTL';
+  });
+
+  const syncBrowserUrlForRegion = useCallback((region: PaymentRegion) => {
+    if (typeof window === 'undefined') return;
+    const winId = parsePathToWindow(window.location.pathname, window.location.search, window.location.hash);
+    if (winId === 'admin') return;
+    const nextPath = windowToPath(winId, region);
+    const nextUrl = `${nextPath}${window.location.search || ''}${window.location.hash || ''}`;
+    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== nextUrl) {
+      window.history.replaceState(window.history.state, '', nextUrl);
+    }
+  }, []);
+
+  const setPaymentRegion = useCallback(
+    (region: PaymentRegion, persist = true) => {
+      setPaymentRegionState(region);
+      if (persist) {
+        try {
+          localStorage.setItem('liddy_payment_region', region);
+        } catch {}
+      }
+      if (!localStorage.getItem('liddy_currency_symbol')) {
+        setCurrencySymbolState(region === 'IN' ? '₹' : '$');
+      }
+      syncBrowserUrlForRegion(region);
+    },
+    [syncBrowserUrlForRegion]
+  );
+
+  useEffect(() => {
+    let active = true;
+    const pathRegion = typeof window !== 'undefined' ? parseRegionFromPath(window.location.pathname) : null;
+    if (pathRegion) {
+      syncBrowserUrlForRegion(pathRegion);
+      return;
+    }
+
+    let hasOverride = false;
+    try {
+      const saved = localStorage.getItem('liddy_payment_region');
+      hasOverride = saved === 'IN' || saved === 'INTL';
+      if (hasOverride && (saved === 'IN' || saved === 'INTL')) {
+        syncBrowserUrlForRegion(saved);
+        return;
+      }
+    } catch {}
+
+    let tz = '';
+    try {
+      tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    } catch {}
+
+    fetchDetectedRegion(tz).then((res) => {
+      if (!active) return;
+      try {
+        const saved = localStorage.getItem('liddy_payment_region');
+        if (saved === 'IN' || saved === 'INTL') return;
+      } catch {}
+      if (res.region === 'IN' || res.region === 'INTL') {
+        setPaymentRegionState(res.region);
+        if (!localStorage.getItem('liddy_currency_symbol')) {
+          setCurrencySymbolState(res.region === 'IN' ? '₹' : '$');
+        }
+        syncBrowserUrlForRegion(res.region);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [syncBrowserUrlForRegion]);
+
   const [currencySymbol, setCurrencySymbolState] = useState<string>(() => {
-    return localStorage.getItem('liddy_currency_symbol') || '₹';
+    const saved = localStorage.getItem('liddy_currency_symbol');
+    if (saved) return saved;
+    try {
+      const pathRegion = parseRegionFromPath(window.location.pathname);
+      if (pathRegion) return pathRegion === 'IN' ? '₹' : '$';
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      if (/kolkata|calcutta|india/i.test(tz)) return '₹';
+    } catch {}
+    return '$';
   });
 
   const [currencyPlacement, setCurrencyPlacementState] = useState<CurrencyPlacement>(() => {
@@ -457,6 +611,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     themeMode,
     currentLanguage,
     planTier,
+    planExpiresAt,
     adFree,
     organizationId,
   });
@@ -467,6 +622,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     themeMode,
     currentLanguage,
     planTier,
+    planExpiresAt,
     adFree,
     organizationId,
   };
@@ -486,6 +642,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
         themeMode: nextPrefs.themeMode,
         currentLanguage: nextPrefs.currentLanguage.slice(0, 16),
         planTier: nextPrefs.planTier,
+        ...(nextPrefs.planExpiresAt ? { planExpiresAt: String(nextPrefs.planExpiresAt).slice(0, 64) } : {}),
         adFree: Boolean(nextPrefs.adFree),
         ...(nextPrefs.organizationId ? { organizationId: nextPrefs.organizationId.slice(0, 128) } : {}),
         updatedAt: serverTimestamp(),
@@ -544,17 +701,26 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
   );
 
   const upgradePlan = useCallback(
-    async (tier: PlanTier) => {
+    async (tier: PlanTier, billingCycle?: BillingCycle) => {
       const nextAdFree = tier !== 'free';
+      const nextExpiry =
+        tier === 'day' ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() : null;
       setPlanTierState(tier);
+      setPlanExpiresAtState(nextExpiry);
       setAdFreeState(nextAdFree);
       localStorage.setItem('liddy_plan_tier', tier);
+      if (nextExpiry) localStorage.setItem('liddy_plan_expires_at', nextExpiry);
+      else localStorage.removeItem('liddy_plan_expires_at');
       localStorage.setItem('liddy_ad_free', nextAdFree ? 'true' : 'false');
 
       if (firebaseUid) {
-        await syncPreferencesToCloud(firebaseUid, { planTier: tier, adFree: nextAdFree });
+        await syncPreferencesToCloud(firebaseUid, {
+          planTier: tier,
+          planExpiresAt: nextExpiry || undefined,
+          adFree: nextAdFree,
+        });
       }
-      const priceUsd = tier === 'pro' ? 12 : tier === 'team' ? 29 : 0;
+      const priceUsd = tier === 'day' ? 2 : tier === 'pro' ? (billingCycle === 'annual' ? 20 : 9) : 0;
       await logAnalyticsEvent('pro_upgrade', 'pricing', `plan:${tier}`, priceUsd);
     },
     [firebaseUid, syncPreferencesToCloud, logAnalyticsEvent]
@@ -564,8 +730,11 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     async (payment: HyperswitchPaymentRecord) => {
       const safeId = sanitizeDocId(payment.paymentId);
       const effectiveUserId = firebaseUid || payment.userId || currentUser?.uid || 'guest';
+      const normalizedTier: PlanTier =
+        payment.planTier === 'day' ? 'day' : payment.planTier === 'free' ? 'free' : 'pro';
       const normalized: HyperswitchPaymentRecord = {
         ...payment,
+        planTier: normalizedTier,
         paymentId: safeId,
         userId: effectiveUserId,
         userEmail: payment.userEmail || currentUser?.email || undefined,
@@ -609,17 +778,28 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
       if (normalized.status === 'succeeded') {
         const nextAdFree = normalized.planTier !== 'free';
+        const nextExpiry =
+          normalized.planTier === 'day'
+            ? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+            : null;
         setPlanTierState(normalized.planTier);
+        setPlanExpiresAtState(nextExpiry);
         setAdFreeState(nextAdFree);
         localStorage.setItem('liddy_plan_tier', normalized.planTier);
+        if (nextExpiry) localStorage.setItem('liddy_plan_expires_at', nextExpiry);
+        else localStorage.removeItem('liddy_plan_expires_at');
         localStorage.setItem('liddy_ad_free', nextAdFree ? 'true' : 'false');
         if (firebaseUid) {
-          await syncPreferencesToCloud(firebaseUid, { planTier: normalized.planTier, adFree: nextAdFree });
+          await syncPreferencesToCloud(firebaseUid, {
+            planTier: normalized.planTier,
+            planExpiresAt: nextExpiry || undefined,
+            adFree: nextAdFree,
+          });
         }
         await logAnalyticsEvent(
           'pro_upgrade',
           'pricing',
-          `hyperswitch:${normalized.region}:${normalized.paymentRail}:${normalized.planTier}`,
+          `checkout:${normalized.region}:${normalized.paymentRail}:${normalized.planTier}`,
           normalized.amountUsdEquivalent
         );
       }
@@ -938,6 +1118,129 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     await deleteDoc(doc(db, 'admins', safeId));
   }, [firebaseUid, isAdminUser]);
 
+  const clearAccountAccessNotice = useCallback(() => {
+    setAccountAccessStatus('active');
+    setAccountAccessReason('');
+    localStorage.removeItem('liddy_account_blocked_state');
+  }, []);
+
+  const fetchAdminUserAccess = useCallback(async (): Promise<UserAccessRecord[]> => {
+    if (!firebaseUid || !isAdminUser) return [];
+    const byKey = new Map<string, UserAccessRecord>();
+
+    try {
+      const headers = await getAdminAuthHeaders();
+      const resp = await fetch('/api/admin/user-access', { headers });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (Array.isArray(data.records)) {
+          data.records.forEach((rec: UserAccessRecord) => {
+            if (rec?.userId) byKey.set(rec.userId, rec);
+          });
+        }
+      }
+    } catch {}
+
+    try {
+      const snap = await getDocs(collection(db, 'user_access'));
+      snap.docs.forEach((d) => {
+        const data = d.data();
+        const rec: UserAccessRecord = {
+          userId: data.userId || d.id,
+          email: data.email,
+          displayName: data.displayName,
+          status: data.status === 'blocked' ? 'blocked' : data.status === 'revoked' ? 'revoked' : 'active',
+          revokedAfterMs: Number(data.revokedAfterMs) || 0,
+          reason: data.reason,
+          updatedBy: data.updatedBy,
+          updatedAt: data.updatedAt?.toDate ? data.updatedAt.toDate().toISOString() : new Date().toISOString(),
+        };
+        if (rec.status !== 'active') {
+          byKey.set(rec.userId, rec);
+        }
+      });
+    } catch {}
+
+    return Array.from(byKey.values());
+  }, [firebaseUid, isAdminUser, getAdminAuthHeaders]);
+
+  const updateAdminUserAccess = useCallback(
+    async ({
+      action,
+      userId,
+      email,
+      displayName,
+      reason,
+    }: {
+      action: 'block' | 'unblock' | 'revoke';
+      userId?: string;
+      email?: string;
+      displayName?: string;
+      reason?: string;
+    }): Promise<{ ok: boolean; error?: string; message?: string }> => {
+      if (!firebaseUid || !isAdminUser) {
+        return { ok: false, error: 'Admin verification required.' };
+      }
+      const cleanUid = userId ? sanitizeDocId(userId) : '';
+      const cleanEmail = String(email || '').trim().toLowerCase().slice(0, 254);
+
+      try {
+        const headers = await getAdminAuthHeaders();
+        const resp = await fetch('/api/admin/user-access', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headers },
+          body: JSON.stringify({
+            action,
+            userId: cleanUid || undefined,
+            email: cleanEmail || undefined,
+            displayName,
+            reason,
+          }),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          return { ok: false, error: data.error || 'Could not update user access.' };
+        }
+
+        const docId = sanitizeDocId(data.record?.userId || cleanUid || `email_${cleanEmail}`);
+        const nextStatus: UserAccessStatus =
+          action === 'block' ? 'blocked' : action === 'revoke' ? 'revoked' : 'active';
+
+        try {
+          if (action === 'unblock') {
+            await deleteDoc(doc(db, 'user_access', docId)).catch(() => {});
+          } else {
+            const payload: Record<string, any> = {
+              userId: docId,
+              status: nextStatus,
+              revokedAfterMs: Number(data.record?.revokedAfterMs) || Date.now(),
+              updatedBy: firebaseUid,
+              updatedAt: serverTimestamp(),
+            };
+            if (cleanEmail) payload.email = cleanEmail;
+            if (displayName) payload.displayName = String(displayName).slice(0, 120);
+            if (reason) payload.reason = String(reason).slice(0, 300);
+            await setDoc(doc(db, 'user_access', docId), payload);
+
+            // Also remove secondary admin grant if revoked/blocked
+            if (cleanUid && cleanUid !== firebaseUid) {
+              await deleteDoc(doc(db, 'admins', cleanUid)).catch(() => {});
+            }
+          }
+        } catch (fsErr) {
+          try {
+            handleFirestoreError(fsErr, OperationType.WRITE, `user_access/${docId}`);
+          } catch {}
+        }
+
+        return { ok: true, message: data.message };
+      } catch (err: any) {
+        return { ok: false, error: err?.message || 'Network error updating user access.' };
+      }
+    },
+    [firebaseUid, isAdminUser, getAdminAuthHeaders]
+  );
+
   const refreshOrganizations = useCallback(async () => {
     try {
       const resp = await fetch('/api/analytics/organizations');
@@ -1149,7 +1452,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return getTranslation(key, currentLanguage, defaultText);
   }, [currentLanguage]);
 
-  // Sync HTML root element classes with theme selection
+  // Sync HTML root element classes with theme selection & cross-tab storage events
   useEffect(() => {
     const root = document.documentElement;
     const applyTheme = (isDark: boolean) => {
@@ -1169,6 +1472,16 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, [themeMode]);
 
   useEffect(() => {
+    const onStorageSync = (e: StorageEvent) => {
+      if (e.key === 'liddy_theme_mode' && (e.newValue === 'light' || e.newValue === 'dark')) {
+        setThemeModeState(e.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorageSync);
+    return () => window.removeEventListener('storage', onStorageSync);
+  }, []);
+
+  useEffect(() => {
     const root = document.documentElement;
     if (highContrast) root.classList.add('high-contrast');
     else root.classList.remove('high-contrast');
@@ -1177,10 +1490,88 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     else root.classList.remove('reduced-motion');
   }, [highContrast, reducedMotion]);
 
+  const enforceAccessOutcome = useCallback(
+    async (
+      status: UserAccessStatus,
+      reason: string,
+      revokedAfterMs = 0,
+      userEmail?: string | null
+    ) => {
+      if (userEmail && userEmail.toLowerCase() === PLATFORM_OWNER_EMAIL) return;
+      if (status === 'blocked') {
+        const finalReason = reason || 'Your account has been blocked by the platform administrator.';
+        try {
+          await logout();
+        } catch {}
+        setFirebaseUid(null);
+        setCurrentUser(null);
+        setIsAdminDocVerified(false);
+        setIsUpgradeModalOpen(false);
+        setIsAuthModalOpen(false);
+        setAccountAccessStatus('blocked');
+        setAccountAccessReason(finalReason);
+        localStorage.removeItem('liddy_user_session');
+        localStorage.setItem(
+          'liddy_account_blocked_state',
+          JSON.stringify({ status: 'blocked', reason: finalReason })
+        );
+        window.dispatchEvent(new CustomEvent('liddy_auth_change', { detail: null }));
+        return;
+      }
+
+      if (status === 'revoked') {
+        let shouldForceSignOut = true;
+        try {
+          const tokenRes = await auth.currentUser?.getIdTokenResult();
+          const issuedAtMs = tokenRes?.authTime ? Date.parse(tokenRes.authTime) : tokenRes?.issuedAtTime ? Date.parse(tokenRes.issuedAtTime) : 0;
+          if (issuedAtMs && revokedAfterMs && issuedAtMs >= revokedAfterMs) {
+            shouldForceSignOut = false;
+          }
+        } catch {}
+
+        if (shouldForceSignOut) {
+          const finalReason = reason || 'Your session was revoked by an administrator. Please sign in again.';
+          try {
+            await logout();
+          } catch {}
+          setFirebaseUid(null);
+          setCurrentUser(null);
+          setIsAdminDocVerified(false);
+          setIsUpgradeModalOpen(false);
+          setAccountAccessStatus('revoked');
+          setAccountAccessReason(finalReason);
+          setAuthModalReason(finalReason);
+          setIsAuthModalOpen(true);
+          localStorage.removeItem('liddy_user_session');
+          window.dispatchEvent(new CustomEvent('liddy_auth_change', { detail: null }));
+        }
+      }
+    },
+    []
+  );
+
   // Sync with Firebase Auth state
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        try {
+          const idToken = await firebaseUser.getIdToken();
+          const resp = await fetch('/api/access/status', {
+            headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+          });
+          if (resp.ok) {
+            const access = await resp.json();
+            if (access?.status === 'blocked') {
+              await enforceAccessOutcome('blocked', access.reason || '', Number(access.revokedAfterMs) || 0, firebaseUser.email);
+              return;
+            }
+            if (access?.status === 'revoked') {
+              await enforceAccessOutcome('revoked', access.reason || '', Number(access.revokedAfterMs) || 0, firebaseUser.email);
+              return;
+            }
+          }
+        } catch {}
+
         const mappedUser: LiddyUser = {
           uid: firebaseUser.uid,
           displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Member',
@@ -1190,6 +1581,9 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
         };
         setCurrentUser(mappedUser);
         setFirebaseUid(firebaseUser.uid);
+        setAccountAccessStatus('active');
+        setAccountAccessReason('');
+        localStorage.removeItem('liddy_account_blocked_state');
         localStorage.setItem('liddy_user_session', JSON.stringify(mappedUser));
         setIsAuthModalOpen(false);
       } else {
@@ -1198,7 +1592,52 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     });
     return () => unsubscribe();
-  }, []);
+  }, [enforceAccessOutcome]);
+
+  // Real-time Firestore & server polling watcher for instant user block / revoke enforcement
+  useEffect(() => {
+    if (!firebaseUid) return;
+    const unsubAccess = onSnapshot(
+      doc(db, 'user_access', firebaseUid),
+      (snap) => {
+        if (!snap.exists()) return;
+        const d = snap.data();
+        if (d.status === 'blocked' || d.status === 'revoked') {
+          void enforceAccessOutcome(
+            d.status,
+            String(d.reason || ''),
+            Number(d.revokedAfterMs) || 0,
+            auth.currentUser?.email || currentUser?.email
+          );
+        }
+      },
+      () => {}
+    );
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const token = await auth.currentUser?.getIdToken().catch(() => '');
+        const email = auth.currentUser?.email || currentUser?.email || '';
+        const params = new URLSearchParams();
+        if (firebaseUid) params.set('uid', firebaseUid);
+        if (email) params.set('email', email);
+        const resp = await fetch(`/api/access/status?${params.toString()}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        if (resp.ok) {
+          const access = await resp.json();
+          if (access?.status === 'blocked' || access?.status === 'revoked') {
+            await enforceAccessOutcome(access.status, access.reason || '', Number(access.revokedAfterMs) || 0, email);
+          }
+        }
+      } catch {}
+    }, 12000);
+
+    return () => {
+      unsubAccess();
+      window.clearInterval(intervalId);
+    };
+  }, [firebaseUid, currentUser?.email, enforceAccessOutcome]);
 
   // Firestore Real-Time Cloud Sync when authenticated
   useEffect(() => {
@@ -1309,17 +1748,31 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
           setCurrencyPlacementState(d.currencyPlacement);
           localStorage.setItem('liddy_currency_placement', d.currencyPlacement);
         }
-        if (d.themeMode === 'system' || d.themeMode === 'light' || d.themeMode === 'dark') {
+        if (d.themeMode === 'light' || d.themeMode === 'dark') {
           setThemeModeState(d.themeMode);
-          localStorage.setItem('liddy_theme_mode', d.themeMode);
+          try {
+            localStorage.setItem('liddy_theme_mode', d.themeMode);
+          } catch {}
         }
         if (typeof d.currentLanguage === 'string') {
           setCurrentLanguageState(d.currentLanguage);
           localStorage.setItem('liddy_language', d.currentLanguage);
         }
-        if (d.planTier === 'free' || d.planTier === 'pro' || d.planTier === 'team') {
-          setPlanTierState(d.planTier);
-          localStorage.setItem('liddy_plan_tier', d.planTier);
+        const expiryStr = typeof d.planExpiresAt === 'string' && d.planExpiresAt ? d.planExpiresAt : null;
+        if (expiryStr) {
+          setPlanExpiresAtState(expiryStr);
+          localStorage.setItem('liddy_plan_expires_at', expiryStr);
+        } else {
+          setPlanExpiresAtState(null);
+          localStorage.removeItem('liddy_plan_expires_at');
+        }
+        if (d.planTier === 'free' || d.planTier === 'day' || d.planTier === 'pro' || d.planTier === 'team') {
+          let resolvedTier: PlanTier = d.planTier === 'team' ? 'pro' : d.planTier;
+          if (resolvedTier === 'day' && expiryStr && Date.now() >= Date.parse(expiryStr)) {
+            resolvedTier = 'free';
+          }
+          setPlanTierState(resolvedTier);
+          localStorage.setItem('liddy_plan_tier', resolvedTier);
         }
         if (typeof d.adFree === 'boolean') {
           setAdFreeState(d.adFree);
@@ -1700,6 +2153,11 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const loginUser = useCallback((user: LiddyUser) => {
+    if (!user.isGuest) {
+      setAccountAccessStatus('active');
+      setAccountAccessReason('');
+      localStorage.removeItem('liddy_account_blocked_state');
+    }
     setCurrentUser(user);
     localStorage.setItem('liddy_user_session', JSON.stringify(user));
     setIsAuthModalOpen(false);
@@ -1765,8 +2223,30 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
   }, []);
 
   const GUEST_TRIAL_DURATION_MS = 30 * 60 * 1000;
-  const GUEST_ACTION_LIMIT = 5;
-  const FREE_PAYMENT_PROMPT_THRESHOLD = 12;
+  const GUEST_ACTION_LIMIT = 8;
+  const FREE_PAYMENT_PROMPT_THRESHOLD = FREE_FEATURE_TRY_LIMIT;
+
+  // Auto-expire 1-Day Unlimited Pass when its 24h window elapses
+  useEffect(() => {
+    if (planTier !== 'day' || !planExpiresAt) return;
+    const checkExpiry = () => {
+      const expiresMs = Date.parse(planExpiresAt);
+      if (Number.isFinite(expiresMs) && Date.now() >= expiresMs) {
+        setPlanTierState('free');
+        setPlanExpiresAtState(null);
+        setAdFreeState(false);
+        localStorage.setItem('liddy_plan_tier', 'free');
+        localStorage.removeItem('liddy_plan_expires_at');
+        localStorage.setItem('liddy_ad_free', 'false');
+        if (firebaseUid) {
+          void syncPreferencesToCloud(firebaseUid, { planTier: 'free', planExpiresAt: '', adFree: false });
+        }
+      }
+    };
+    checkExpiry();
+    const timer = window.setInterval(checkExpiry, 60000);
+    return () => window.clearInterval(timer);
+  }, [planTier, planExpiresAt, firebaseUid, syncPreferencesToCloud]);
 
   const getGuestSessionStart = useCallback((): number => {
     try {
@@ -1825,6 +2305,8 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const isGuestLocked = isGuestSession && (engagementCount > GUEST_ACTION_LIMIT || guestTimeExpired);
   const remainingGuestActions = isGuestSession ? Math.max(0, GUEST_ACTION_LIMIT - engagementCount) : GUEST_ACTION_LIMIT;
+  const freeTriesRemaining =
+    planTier === 'free' && !isAdminUser ? Math.max(0, FREE_PAYMENT_PROMPT_THRESHOLD - freeTierActionCount) : Infinity;
 
   const trackEngagement = useCallback((featureName?: string): boolean => {
     if (!currentUser || currentUser.isGuest) {
@@ -1846,31 +2328,43 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
           expiredNow
             ? 'Your 30-minute guest preview ended — Create a free account to continue'
             : featureName
-            ? `Free 5-action guest preview used — Sign up to continue with ${featureName}`
+            ? `Free ${GUEST_ACTION_LIMIT}-action guest preview used — Sign up to continue with ${featureName}`
             : 'Free guest allowance used — Create a free account to continue'
         );
         return false;
       }
-    } else if (planTier === 'free' && !isAdminUser) {
-      const userKey = sanitizeDocId(currentUser.uid || currentUser.email || 'member');
-      let nextFreeCount = freeTierActionCount + 1;
-      try {
-        const stored = parseInt(localStorage.getItem(`liddy_free_actions_${userKey}`) || String(freeTierActionCount), 10);
-        if (!isNaN(stored)) nextFreeCount = Math.max(nextFreeCount, stored + 1);
-        localStorage.setItem(`liddy_free_actions_${userKey}`, nextFreeCount.toString());
-      } catch {}
-      setFreeTierActionCount(nextFreeCount);
-
-      if (nextFreeCount >= FREE_PAYMENT_PROMPT_THRESHOLD && nextFreeCount % FREE_PAYMENT_PROMPT_THRESHOLD === 0) {
-        openUpgradeModal(
-          featureName
-            ? `You've completed ${nextFreeCount} workspace actions — Unlock unlimited Pro & Team features for ${featureName}`
-            : `You've completed ${nextFreeCount} workspace actions on Starter Free — Upgrade anytime to unlock full limits`
-        );
-      }
+      return true;
     }
+
+    const hasActiveDayPass = planTier === 'day' && (!planExpiresAt || Date.now() < Date.parse(planExpiresAt));
+    if (planTier === 'pro' || hasActiveDayPass || isAdminUser) {
+      return true;
+    }
+
+    // Signed-in Starter Free user: 5 AI & Studio tries max; Dashboard, daily spends & portfolio remain open forever.
+    const userKey = sanitizeDocId(currentUser.uid || currentUser.email || 'member');
+    let currentStored = freeTierActionCount;
+    try {
+      const stored = parseInt(localStorage.getItem(`liddy_free_actions_${userKey}`) || String(freeTierActionCount), 10);
+      if (!isNaN(stored)) currentStored = Math.max(currentStored, stored);
+    } catch {}
+
+    if (currentStored >= FREE_PAYMENT_PROMPT_THRESHOLD) {
+      openUpgradeModal(
+        featureName
+          ? `You have used your ${FREE_PAYMENT_PROMPT_THRESHOLD} free AI & Studio tries (${featureName}). Unlock unlimited access — Dashboard, daily spends & portfolio stay open.`
+          : `You have used your ${FREE_PAYMENT_PROMPT_THRESHOLD} free AI & Studio tries. Upgrade for unlimited access.`
+      );
+      return false;
+    }
+
+    const nextFreeCount = currentStored + 1;
+    try {
+      localStorage.setItem(`liddy_free_actions_${userKey}`, nextFreeCount.toString());
+    } catch {}
+    setFreeTierActionCount(nextFreeCount);
     return true;
-  }, [currentUser, engagementCount, freeTierActionCount, planTier, isAdminUser, isGuestTrialExpired, openAuthModal, openUpgradeModal]);
+  }, [currentUser, engagementCount, freeTierActionCount, planTier, planExpiresAt, isAdminUser, isGuestTrialExpired, openAuthModal, openUpgradeModal]);
 
   const user = {
     name: currentUser?.displayName || 'Member',
@@ -1914,10 +2408,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setTransactions(prev => [newTransaction, ...prev]);
 
     if (t.paymentMethod === 'SCAN_RECEIPT') {
-      logAnalyticsEvent('ocr_scan', 'scanner', t.merchant, t.amount);
-      trackEngagement('Receipt & Expense Scanner');
-    } else {
-      trackEngagement('Expense Ledger');
+      logAnalyticsEvent('ocr_scan', 'invoices', t.merchant, t.amount);
     }
 
     if (firebaseUid) {
@@ -2155,7 +2646,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
         'dueDate', 'senderName', 'senderDetails', 'senderTaxId', 'clientName', 'clientDetails',
         'clientEmail', 'clientTaxId', 'templateStyle', 'paperFormat',
         'items', 'subtotal', 'taxTotal', 'discountTotal', 'grandTotal',
-        'notes', 'upiId', 'payeeName', 'paymentStatus', 'paidAt'
+        'notes', 'upiId', 'payeeName', 'paypalId', 'paymentRegion', 'paymentStatus', 'paidAt'
       ];
       for (const k of allowedKeys) {
         if ((updates as any)[k] !== undefined) {
@@ -2187,9 +2678,13 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  const markInvoicePaid = (id: string, paymentMethod = 'UPI', upiRef?: string) => {
+  const markInvoicePaid = (id: string, paymentMethod?: string, upiRef?: string) => {
     const target = invoices.find(inv => inv.id === id);
     if (!target || target.paymentStatus === 'paid') return;
+
+    const effectiveMethod =
+      paymentMethod ||
+      ((target.paymentRegion || paymentRegion) === 'IN' ? 'UPI' : 'PAYPAL');
 
     const paidAt = new Date().toISOString();
     updateInvoice(id, {
@@ -2198,9 +2693,15 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
 
     const normalizedMethod =
-      paymentMethod === 'CASH' || paymentMethod === 'CARD' || paymentMethod === 'UPI' || paymentMethod === 'INVOICE'
-        ? paymentMethod
-        : 'UPI';
+      effectiveMethod === 'CASH' ||
+      effectiveMethod === 'CARD' ||
+      effectiveMethod === 'UPI' ||
+      effectiveMethod === 'INVOICE' ||
+      effectiveMethod === 'PAYPAL'
+        ? effectiveMethod
+        : (target.paymentRegion || paymentRegion) === 'IN'
+        ? 'UPI'
+        : 'PAYPAL';
 
     addTransaction({
       merchant: target.clientName || target.senderName || 'Settled Client Bill',
@@ -2544,6 +3045,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       logoutUser,
       trackEngagement,
       planTier,
+      planExpiresAt,
       adFree,
       showAds,
       organizationId,
@@ -2567,6 +3069,11 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       fetchAdminAllowlist,
       addAdminAllowlistEntry,
       removeAdminAllowlistEntry,
+      accountAccessStatus,
+      accountAccessReason,
+      clearAccountAccessNotice,
+      fetchAdminUserAccess,
+      updateAdminUserAccess,
       reportClientFailure,
       addTransaction,
       updateTransaction,
@@ -2589,6 +3096,8 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       updatePayoutConfig,
       aiImageConfig,
       updateAiImageConfig,
+      paymentRegion,
+      setPaymentRegion,
       currencySymbol,
       setCurrencySymbol,
       currencyPlacement,
@@ -2612,6 +3121,7 @@ export const FinMindProvider: React.FC<{ children: React.ReactNode }> = ({ child
       remainingGuestActions,
       engagementCount,
       freeTierActionCount,
+      freeTriesRemaining,
       isUpgradeModalOpen,
       upgradeModalReason,
       openUpgradeModal,

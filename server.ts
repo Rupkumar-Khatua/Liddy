@@ -4,7 +4,8 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
-import { GoogleGenAI, Type, Modality, type LiveServerMessage, type FunctionDeclaration } from '@google/genai';
+import { GoogleGenAI, Type, Modality, ThinkingLevel, type LiveServerMessage, type FunctionDeclaration } from '@google/genai';
+import { CURATED_FINANCE_SKILLS, MCP_CONNECTOR_TEMPLATES } from './services/agentExtensionsData';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,12 +54,14 @@ const getAiClient = () => {
       headers: {
         'User-Agent': 'aistudio-build',
       },
-      timeout: 25000,
+      timeout: 30000,
     },
   });
 };
 
 let quotaCooldownUntil = 0;
+let hydrogenSlowUntil = 0;
+let hydrogenCooldownUntil = 0;
 
 function isQuotaError(err: any): boolean {
   const msg = String(err?.message || err || '').toLowerCase();
@@ -66,9 +69,77 @@ function isQuotaError(err: any): boolean {
   return status === 429 || msg.includes('429') || msg.includes('resource_exhausted') || msg.includes('quota');
 }
 
+function isDeadlineOrTimeoutError(err: any): boolean {
+  const msg = String(err?.message || err || '').toLowerCase();
+  const status = err?.status || err?.code;
+  return (
+    status === 504 ||
+    msg.includes('504') ||
+    msg.includes('deadline_exceeded') ||
+    msg.includes('deadline expired') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    err?.name === 'TimeoutError' ||
+    err?.name === 'AbortError'
+  );
+}
+
 export function shouldSkipGeminiCall(): boolean {
   if (!(process.env.API_KEY || process.env.GEMINI_API_KEY)) return true;
   return Date.now() < quotaCooldownUntil;
+}
+
+function markHydrogenUnavailable(err: any) {
+  if (isQuotaError(err)) {
+    hydrogenCooldownUntil = Math.max(hydrogenCooldownUntil, Date.now() + 5 * 60 * 1000);
+  } else if (isDeadlineOrTimeoutError(err)) {
+    hydrogenSlowUntil = Math.max(hydrogenSlowUntil, Date.now() + 90 * 1000);
+  }
+}
+
+async function generateWithHydrogenFailover(
+  ai: GoogleGenAI,
+  params: {
+    contents: any;
+    config?: Record<string, any>;
+    timeoutMs?: number;
+  }
+) {
+  const timeoutMs = params.timeoutMs ?? 18000;
+  const skipHydrogen = Date.now() < hydrogenCooldownUntil || Date.now() < hydrogenSlowUntil;
+
+  if (!skipHydrogen) {
+    try {
+      return await ai.models.generateContent({
+        model: 'gemini-4-hydrogen',
+        contents: params.contents,
+        config: {
+          ...(params.config || {}),
+          abortSignal: AbortSignal.timeout(timeoutMs),
+        },
+      });
+    } catch (err: any) {
+      if (!isQuotaError(err) && !isDeadlineOrTimeoutError(err)) {
+        throw err;
+      }
+      markHydrogenUnavailable(err);
+      console.warn('[Gemini Failover] gemini-4-hydrogen unavailable, retrying on gemini-3.1-flash-lite:', err?.message || err);
+    }
+  }
+
+  const liteConfig: Record<string, any> = {
+    ...(params.config || {}),
+    abortSignal: AbortSignal.timeout(Math.max(timeoutMs, 18000)),
+  };
+  if (liteConfig.thinkingConfig) {
+    liteConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.MINIMAL };
+  }
+
+  return await ai.models.generateContent({
+    model: 'gemini-3.1-flash-lite',
+    contents: params.contents,
+    config: liteConfig,
+  });
 }
 
 // ==========================================
@@ -152,6 +223,8 @@ const KNOWN_API_ENDPOINTS: Array<{ method: string; path: string; subsystem: ApiE
   { method: 'GET', path: '/api/payments/methods', subsystem: 'Payments' },
   { method: 'POST', path: '/api/payments/create-intent', subsystem: 'Payments' },
   { method: 'POST', path: '/api/payments/authorize-rail', subsystem: 'Payments' },
+  { method: 'POST', path: '/api/payments/email-otp/send', subsystem: 'Payments' },
+  { method: 'POST', path: '/api/payments/email-otp/verify', subsystem: 'Payments' },
   { method: 'POST', path: '/api/payments/confirm', subsystem: 'Payments' },
   { method: 'POST', path: '/api/payments/paypal/create-order', subsystem: 'Payments' },
   { method: 'POST', path: '/api/payments/paypal/capture-order', subsystem: 'Payments' },
@@ -166,6 +239,8 @@ const KNOWN_API_ENDPOINTS: Array<{ method: string; path: string; subsystem: ApiE
   { method: 'GET', path: '/api/ai/image-config/public', subsystem: 'AI' },
   { method: 'POST', path: '/api/gemini/enhance-prompt', subsystem: 'AI' },
   { method: 'POST', path: '/api/gemini/agent', subsystem: 'AI' },
+  { method: 'GET', path: '/api/skills/search', subsystem: 'AI' },
+  { method: 'POST', path: '/api/mcp/inspect', subsystem: 'AI' },
   { method: 'POST', path: '/api/gemini/receipt', subsystem: 'AI' },
   { method: 'POST', path: '/api/gemini/automation', subsystem: 'AI' },
   { method: 'POST', path: '/api/gemini/tts', subsystem: 'AI' },
@@ -239,8 +314,74 @@ function recordFailure(
 
 export function markQuotaExhausted(err?: any) {
   if (isQuotaError(err)) {
-    quotaCooldownUntil = Date.now() + 60 * 1000;
+    quotaCooldownUntil = Date.now() + 15 * 1000;
     recordFailure('warning', 'AI', 'Gemini Quota Cooldown', 429, String(err?.message || 'Rate limit / quota reached'));
+  }
+}
+
+interface ServerUserAccessRecord {
+  userId: string;
+  email?: string;
+  displayName?: string;
+  status: 'active' | 'revoked' | 'blocked';
+  revokedAfterMs: number;
+  reason?: string;
+  updatedBy?: string;
+  updatedAt: string;
+}
+
+const USER_ACCESS_FILE = path.join(process.cwd(), '.liddy_user_access.json');
+const runtimeUserAccessMap = new Map<string, ServerUserAccessRecord>();
+
+function loadUserAccessStore() {
+  try {
+    if (fs.existsSync(USER_ACCESS_FILE)) {
+      const parsed = JSON.parse(fs.readFileSync(USER_ACCESS_FILE, 'utf8'));
+      if (Array.isArray(parsed)) {
+        parsed.forEach((rec: ServerUserAccessRecord) => {
+          if (rec?.userId) runtimeUserAccessMap.set(rec.userId, rec);
+        });
+      }
+    }
+  } catch {}
+}
+
+function saveUserAccessStore() {
+  try {
+    fs.writeFileSync(USER_ACCESS_FILE, JSON.stringify(Array.from(runtimeUserAccessMap.values()), null, 2));
+  } catch {}
+}
+
+loadUserAccessStore();
+
+function findUserAccessRecord(uid?: string | null, email?: string | null): ServerUserAccessRecord | null {
+  if (uid && runtimeUserAccessMap.has(uid)) {
+    return runtimeUserAccessMap.get(uid) || null;
+  }
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (cleanEmail) {
+    for (const rec of runtimeUserAccessMap.values()) {
+      if (rec.email && rec.email.toLowerCase() === cleanEmail) {
+        return rec;
+      }
+    }
+  }
+  return null;
+}
+
+function decodeFirebaseJwtClaims(idToken: string): { uid?: string; email?: string; iatMs?: number; authTimeMs?: number } | null {
+  try {
+    const parts = idToken.split('.');
+    if (parts.length !== 3) return null;
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+    const uid = typeof json.user_id === 'string' ? json.user_id : typeof json.sub === 'string' ? json.sub : undefined;
+    const email = typeof json.email === 'string' ? json.email.toLowerCase() : undefined;
+    const iatMs = typeof json.iat === 'number' ? json.iat * 1000 : undefined;
+    const authTimeMs = typeof json.auth_time === 'number' ? json.auth_time * 1000 : undefined;
+    return { uid, email, iatMs, authTimeMs };
+  } catch {
+    return null;
   }
 }
 
@@ -266,6 +407,10 @@ async function verifyAdminRequest(req: express.Request): Promise<{ ok: boolean; 
     }
     const email = String(user.email || '').toLowerCase();
     const verified = Boolean(user.emailVerified);
+    const accessRec = findUserAccessRecord(user.localId, email);
+    if (accessRec?.status === 'blocked' && email !== PLATFORM_OWNER_EMAIL) {
+      return { ok: false, status: 403, error: 'Your account has been blocked by the platform administrator.' };
+    }
     if (email === PLATFORM_OWNER_EMAIL && verified) {
       return { ok: true, uid: user.localId, email };
     }
@@ -275,9 +420,36 @@ async function verifyAdminRequest(req: express.Request): Promise<{ ok: boolean; 
   }
 }
 
-// Track all /api/* requests + enforce Admin maintenance switches
+// Enforce blocked/revoked user access + track all /api/* requests + enforce Admin maintenance switches
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/')) return next();
+
+  if (req.path !== '/api/access/status' && req.path !== '/api/health') {
+    const authHeader = String(req.headers.authorization || '');
+    const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const claims = idToken ? decodeFirebaseJwtClaims(idToken) : null;
+    const reqUid = claims?.uid || String(req.headers['x-liddy-uid'] || '').trim() || undefined;
+    const reqEmail = claims?.email || String(req.headers['x-liddy-email'] || '').trim().toLowerCase() || undefined;
+
+    if ((reqUid || reqEmail) && reqEmail !== PLATFORM_OWNER_EMAIL) {
+      const accessRec = findUserAccessRecord(reqUid, reqEmail);
+      if (accessRec?.status === 'blocked') {
+        return res.status(403).json({
+          error: 'Your account has been blocked from using Liddy by an administrator.',
+          code: 'ACCOUNT_BLOCKED',
+        });
+      }
+      if (accessRec?.status === 'revoked') {
+        const tokenIssuedMs = claims?.authTimeMs || claims?.iatMs || 0;
+        if (!tokenIssuedMs || tokenIssuedMs < accessRec.revokedAfterMs) {
+          return res.status(401).json({
+            error: 'Your session was revoked by an administrator. Please sign in again.',
+            code: 'SESSION_REVOKED',
+          });
+        }
+      }
+    }
+  }
 
   const started = Date.now();
   const normPath = req.path
@@ -1588,8 +1760,8 @@ app.get('/sitemap.xml', (req, res) => {
   const publicPaths = [
     { path: '/', priority: '1.0', changefreq: 'daily' },
     { path: '/workspace/overview', priority: '0.9', changefreq: 'daily' },
+    { path: '/workspace/expenses', priority: '0.9', changefreq: 'daily' },
     { path: '/workspace/invoices', priority: '0.9', changefreq: 'weekly' },
-    { path: '/workspace/scanner', priority: '0.9', changefreq: 'weekly' },
     { path: '/workspace/markets', priority: '0.9', changefreq: 'always' },
     { path: '/workspace/agent', priority: '0.8', changefreq: 'weekly' },
     { path: '/workspace/vision', priority: '0.8', changefreq: 'weekly' },
@@ -1741,7 +1913,7 @@ app.post('/api/analytics/organizations', (req, res) => {
       industry: String(body.industry || 'Solo Studio & Consulting').slice(0, 80),
       planTier,
       seatCount: Math.max(1, Number(body.seatCount) || 1),
-      monthlyRevenueUsd: Math.max(0, Number(body.monthlyRevenueUsd) ?? (planTier === 'pro' ? 12 : planTier === 'team' ? 29 : planTier === 'enterprise' ? 99 : 0)),
+      monthlyRevenueUsd: Math.max(0, Number(body.monthlyRevenueUsd) ?? (planTier === 'pro' ? 9 : planTier === 'team' ? 20 : planTier === 'enterprise' ? 99 : 0)),
       status: ['active', 'trial', 'paused', 'churned'].includes(body.status) ? body.status : 'active',
       ownerUserId: String(body.ownerUserId || 'admin').slice(0, 128),
       billingEmail: body.billingEmail ? String(body.billingEmail).slice(0, 254) : undefined,
@@ -1942,8 +2114,8 @@ interface RuntimePaymentRecord {
   userId: string;
   userEmail?: string;
   userName?: string;
-  planTier: 'free' | 'pro' | 'team';
-  billingCycle: 'monthly' | 'annual';
+  planTier: 'free' | 'day' | 'pro';
+  billingCycle: 'daily' | 'monthly' | 'annual';
   region: 'IN' | 'INTL';
   currency: 'INR' | 'USD' | 'EUR' | 'GBP';
   amount: number;
@@ -1967,10 +2139,17 @@ interface RuntimePaymentIntentExtra {
 
 const runtimePaymentIntents = new Map<string, RuntimePaymentRecord & RuntimePaymentIntentExtra>();
 const runtimePaymentsLedger: RuntimePaymentRecord[] = [];
+const emailOtpChallenges = new Map<string, { email: string; code: string; expiresAt: number; attempts: number }>();
+const verifiedEmailOtpTokens = new Map<string, { email: string; expiresAt: number }>();
 
 const PLAN_RATES = {
-  pro: { monthlyUsd: 12, annualMonthlyUsd: 9, monthlyInr: 999, annualMonthlyInr: 749 },
-  team: { monthlyUsd: 29, annualMonthlyUsd: 24, monthlyInr: 2499, annualMonthlyInr: 1999 },
+  day: { dailyUsd: 2, dailyInr: 49 },
+  pro: {
+    monthlyUsd: 9,
+    annualTotalUsd: 20,
+    monthlyInr: 149,
+    annualTotalInr: 999,
+  },
 };
 
 function passesLuhnCheck(cardDigits: string): boolean {
@@ -2379,6 +2558,72 @@ app.post('/api/admin/ai-image-probe', async (req, res) => {
   res.json(results);
 });
 
+app.get('/api/geo/region', async (req, res) => {
+  try {
+    const headerCandidates = [
+      req.headers['cf-ipcountry'],
+      req.headers['x-vercel-ip-country'],
+      req.headers['x-appengine-country'],
+      req.headers['x-country-code'],
+      req.headers['x-geo-country'],
+      req.headers['x-client-country'],
+    ];
+    for (const raw of headerCandidates) {
+      const code = String(raw || '').trim().toUpperCase();
+      if (/^[A-Z]{2}$/.test(code) && code !== 'XX' && code !== 'T1') {
+        return res.json({
+          region: code === 'IN' ? 'IN' : 'INTL',
+          countryCode: code,
+          source: 'header',
+        });
+      }
+    }
+
+    const tzHint = String(req.query.tz || '').trim();
+    const forwardedFor = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    const rawIp = forwardedFor || req.socket?.remoteAddress || '';
+    const cleanIp = rawIp.replace(/^::ffff:/, '').trim();
+    const isPrivateIp =
+      !cleanIp ||
+      cleanIp === '::1' ||
+      cleanIp === '127.0.0.1' ||
+      cleanIp.startsWith('10.') ||
+      cleanIp.startsWith('192.168.') ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(cleanIp);
+
+    if (!isPrivateIp) {
+      try {
+        const ipResp = await fetch(`https://ipapi.co/${encodeURIComponent(cleanIp)}/country/`, {
+          signal: AbortSignal.timeout(1200),
+        });
+        if (ipResp.ok) {
+          const code = (await ipResp.text()).trim().toUpperCase();
+          if (/^[A-Z]{2}$/.test(code)) {
+            return res.json({
+              region: code === 'IN' ? 'IN' : 'INTL',
+              countryCode: code,
+              source: 'ip',
+            });
+          }
+        }
+      } catch {}
+    }
+
+    const tzIsIndia =
+      tzHint.includes('Kolkata') ||
+      tzHint.includes('Calcutta') ||
+      tzHint === 'Asia/Delhi' ||
+      tzHint === 'IST';
+    return res.json({
+      region: tzIsIndia ? 'IN' : 'INTL',
+      countryCode: tzIsIndia ? 'IN' : 'US',
+      source: tzHint ? 'timezone' : 'default',
+    });
+  } catch {
+    return res.json({ region: 'INTL', countryCode: 'US', source: 'fallback' });
+  }
+});
+
 app.get('/api/payments/methods', (req, res) => {
   const country = String(req.query.country || 'IN').toUpperCase() === 'IN' ? 'IN' : 'INTL';
   res.json({
@@ -2399,8 +2644,14 @@ app.get('/api/payments/methods', (req, res) => {
 app.post('/api/payments/create-intent', async (req, res) => {
   try {
     const body = req.body || {};
-    const planTier: 'pro' | 'team' = body.planTier === 'team' ? 'team' : 'pro';
-    const billingCycle: 'monthly' | 'annual' = body.billingCycle === 'monthly' ? 'monthly' : 'annual';
+    const requestedTier = String(body.planTier || 'pro').toLowerCase();
+    const billingCycle: 'daily' | 'monthly' | 'annual' =
+      requestedTier === 'day' || body.billingCycle === 'daily'
+        ? 'daily'
+        : body.billingCycle === 'annual'
+        ? 'annual'
+        : 'monthly';
+    const planTier: 'day' | 'pro' = billingCycle === 'daily' || requestedTier === 'day' ? 'day' : 'pro';
     const region: 'IN' | 'INTL' = body.region === 'IN' ? 'IN' : 'INTL';
     const validRails = new Set(['UPI_QR', 'UPI_ID', 'PAYPAL']);
     if (body.paymentRail && !validRails.has(body.paymentRail)) {
@@ -2412,13 +2663,21 @@ app.post('/api/payments/create-intent', async (req, res) => {
       ? 'UPI_QR'
       : 'PAYPAL';
 
-    const rates = PLAN_RATES[planTier];
-    const mult = billingCycle === 'annual' ? 12 : 1;
+    const amountUsdEquivalent =
+      planTier === 'day'
+        ? PLAN_RATES.day.dailyUsd
+        : billingCycle === 'annual'
+        ? PLAN_RATES.pro.annualTotalUsd
+        : PLAN_RATES.pro.monthlyUsd;
     const currency: 'INR' | 'USD' = region === 'IN' ? 'INR' : 'USD';
-    const amount = region === 'IN'
-      ? (billingCycle === 'annual' ? rates.annualMonthlyInr : rates.monthlyInr) * mult
-      : (billingCycle === 'annual' ? rates.annualMonthlyUsd : rates.monthlyUsd) * mult;
-    const amountUsdEquivalent = (billingCycle === 'annual' ? rates.annualMonthlyUsd : rates.monthlyUsd) * mult;
+    const amount =
+      region === 'IN'
+        ? planTier === 'day'
+          ? PLAN_RATES.day.dailyInr
+          : billingCycle === 'annual'
+          ? PLAN_RATES.pro.annualTotalInr
+          : PLAN_RATES.pro.monthlyInr
+        : amountUsdEquivalent;
 
     const connectorMap: Record<string, string> = {
       UPI_QR: 'in_upi_qr',
@@ -2572,6 +2831,134 @@ async function verifyFirebasePhoneIdToken(
   }
 }
 
+app.post('/api/payments/email-otp/send', async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: 'Enter a valid email address to receive your verification code.' });
+    }
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const challengeId = `eotp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    emailOtpChallenges.set(challengeId, {
+      email,
+      code,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+      attempts: 0,
+    });
+
+    // Clean expired entries
+    const now = Date.now();
+    for (const [k, v] of emailOtpChallenges.entries()) {
+      if (v.expiresAt < now) emailOtpChallenges.delete(k);
+    }
+
+    let deliveredViaEmail = false;
+    const resendKey = process.env.RESEND_API_KEY;
+    if (resendKey) {
+      try {
+        const mailResp = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${resendKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: process.env.RESEND_FROM_EMAIL || 'Liddy Checkout <onboarding@resend.dev>',
+            to: [email],
+            subject: `Your Liddy checkout verification code: ${code}`,
+            html: `<p>Your 6-digit Liddy verification code is <strong>${code}</strong>. It expires in 10 minutes.</p>`,
+          }),
+          signal: AbortSignal.timeout(7000),
+        });
+        deliveredViaEmail = mailResp.ok;
+      } catch {
+        deliveredViaEmail = false;
+      }
+    }
+
+    res.json({
+      ok: true,
+      challengeId,
+      email,
+      expiresInSec: 600,
+      deliveryMode: deliveredViaEmail ? 'email_inbox' : 'in_app_fallback',
+      ...(deliveredViaEmail ? {} : { previewCode: code }),
+      notice: deliveredViaEmail
+        ? `6-digit verification code sent to ${email}.`
+        : 'Firebase SMS is not active yet — use this 6-digit email verification code to complete checkout securely.',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Unable to generate verification code.' });
+  }
+});
+
+app.post('/api/payments/email-otp/verify', (req, res) => {
+  try {
+    const challengeId = String(req.body?.challengeId || '').trim();
+    const code = String(req.body?.code || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const record = emailOtpChallenges.get(challengeId);
+    if (!record) {
+      return res.status(404).json({ error: 'Verification code expired or not found. Request a new code.' });
+    }
+    if (Date.now() > record.expiresAt) {
+      emailOtpChallenges.delete(challengeId);
+      return res.status(400).json({ error: 'Verification code expired. Request a new code.' });
+    }
+    if (email && email !== record.email) {
+      return res.status(400).json({ error: 'Email address does not match this verification request.' });
+    }
+    record.attempts += 1;
+    if (record.attempts > 5) {
+      emailOtpChallenges.delete(challengeId);
+      return res.status(429).json({ error: 'Too many invalid attempts. Request a new code.' });
+    }
+    if (code !== record.code) {
+      return res.status(400).json({ error: 'Incorrect 6-digit code. Please check and try again.' });
+    }
+
+    emailOtpChallenges.delete(challengeId);
+    const emailOtpToken = `etok_${Date.now()}_${Math.random().toString(36).slice(2, 12)}`;
+    verifiedEmailOtpTokens.set(emailOtpToken, {
+      email: record.email,
+      expiresAt: Date.now() + 20 * 60 * 1000,
+    });
+
+    res.json({
+      ok: true,
+      emailOtpToken,
+      verifiedEmail: record.email,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Unable to verify email code.' });
+  }
+});
+
+async function verifyCheckoutIdentity(body: any): Promise<{ valid: boolean; label?: string; method?: 'sms' | 'email'; error?: string }> {
+  const firebasePhoneIdToken = String(body?.firebasePhoneIdToken || '').trim();
+  const expectedPhone = String(body?.verifiedPhoneNumber || '').trim();
+  const emailOtpToken = String(body?.emailOtpToken || '').trim();
+
+  if (firebasePhoneIdToken) {
+    const phoneCheck = await verifyFirebasePhoneIdToken(firebasePhoneIdToken, expectedPhone);
+    if (!phoneCheck.valid) {
+      return { valid: false, error: phoneCheck.error || 'SMS phone verification failed.' };
+    }
+    return { valid: true, label: phoneCheck.phoneNumber, method: 'sms' };
+  }
+
+  if (emailOtpToken) {
+    const tokenRecord = verifiedEmailOtpTokens.get(emailOtpToken);
+    if (!tokenRecord || Date.now() > tokenRecord.expiresAt) {
+      verifiedEmailOtpTokens.delete(emailOtpToken);
+      return { valid: false, error: 'Email verification expired. Request and verify a fresh 6-digit code.' };
+    }
+    return { valid: true, label: tokenRecord.email, method: 'email' };
+  }
+
+  return { valid: false, error: 'Complete SMS or 6-digit Email OTP verification before confirming payment.' };
+}
+
 app.post('/api/payments/confirm', async (req, res) => {
   try {
     const body = req.body || {};
@@ -2602,18 +2989,10 @@ app.post('/api/payments/confirm', async (req, res) => {
       }
     }
 
-    const firebasePhoneIdToken = String(body.firebasePhoneIdToken || '').trim();
-    const expectedPhone = String(body.verifiedPhoneNumber || '').trim();
-    if (!firebasePhoneIdToken) {
-      return res.status(400).json({
-        error: 'Phone SMS verification is required before confirming payment.',
-      });
-    }
-
-    const phoneVerification = await verifyFirebasePhoneIdToken(firebasePhoneIdToken, expectedPhone);
-    if (!phoneVerification.valid) {
+    const identityCheck = await verifyCheckoutIdentity(body);
+    if (!identityCheck.valid) {
       return res.status(401).json({
-        error: phoneVerification.error || 'SMS phone verification failed.',
+        error: identityCheck.error || 'Checkout verification failed.',
       });
     }
 
@@ -2646,10 +3025,15 @@ app.post('/api/payments/confirm', async (req, res) => {
       eventType: 'pro_upgrade',
       featureWindow: 'pricing',
       userId: confirmed.userId,
-      metadata: `${confirmed.planTier}/${confirmed.region}/${confirmed.paymentRail}/${phoneVerification.phoneNumber || 'sms'}`,
+      metadata: `${confirmed.planTier}/${confirmed.region}/${confirmed.paymentRail}/${identityCheck.label || identityCheck.method}`,
       revenueImpactUsd: confirmed.amountUsdEquivalent,
       createdAt: confirmed.createdAt,
     });
+
+    const verifiedViaNote =
+      identityCheck.method === 'sms'
+        ? `Verified via SMS (${identityCheck.label})`
+        : `Verified via Email OTP (${identityCheck.label})`;
 
     const receiptPayload = buildFormattedInvoiceEmailPayload({
       recipientEmail: confirmed.userEmail || '',
@@ -2659,7 +3043,7 @@ app.post('/api/payments/confirm', async (req, res) => {
       date: confirmed.createdAt.split('T')[0],
       items: [
         {
-          description: `Liddy ${confirmed.planTier.toUpperCase()} Subscription (${confirmed.billingCycle})`,
+          description: `Liddy ${confirmed.planTier === 'day' ? '1-Day Pass' : confirmed.planTier.toUpperCase()} (${confirmed.billingCycle})`,
           quantity: 1,
           unitPrice: confirmed.amount,
           total: confirmed.amount,
@@ -2674,11 +3058,17 @@ app.post('/api/payments/confirm', async (req, res) => {
       connector: confirmed.connector,
       senderName: runtimePayoutConfig.payeeName || 'Liddy Workspace Billing',
       notes: runtimePayoutConfig.upiId
-        ? `Paid to ${runtimePayoutConfig.payeeName || 'Owner'} (${runtimePayoutConfig.upiId}). Verified via SMS (${phoneVerification.phoneNumber}).`
-        : `Verified via SMS (${phoneVerification.phoneNumber}). Subscription unlocked immediately.`,
+        ? `Paid to ${runtimePayoutConfig.payeeName || 'Owner'} (${runtimePayoutConfig.upiId}). ${verifiedViaNote}.`
+        : `${verifiedViaNote}. Subscription unlocked immediately.`,
     });
 
-    res.json({ ok: true, payment: confirmed, receiptEmail: receiptPayload, verifiedPhone: phoneVerification.phoneNumber });
+    res.json({
+      ok: true,
+      payment: confirmed,
+      receiptEmail: receiptPayload,
+      verifiedPhone: identityCheck.method === 'sms' ? identityCheck.label : undefined,
+      verifiedEmail: identityCheck.method === 'email' ? identityCheck.label : undefined,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || 'Payment confirmation failed' });
   }
@@ -2724,14 +3114,9 @@ app.post('/api/payments/paypal/create-order', async (req, res) => {
     if (!existing) {
       return res.status(404).json({ error: 'Payment session expired or not found.' });
     }
-    const firebasePhoneIdToken = String(body.firebasePhoneIdToken || '').trim();
-    const expectedPhone = String(body.verifiedPhoneNumber || '').trim();
-    if (!firebasePhoneIdToken) {
-      return res.status(400).json({ error: 'Complete mobile SMS verification before launching PayPal checkout.' });
-    }
-    const phoneCheck = await verifyFirebasePhoneIdToken(firebasePhoneIdToken, expectedPhone);
-    if (!phoneCheck.valid) {
-      return res.status(401).json({ error: phoneCheck.error || 'SMS phone verification failed.' });
+    const identityCheck = await verifyCheckoutIdentity(body);
+    if (!identityCheck.valid) {
+      return res.status(401).json({ error: identityCheck.error || 'Complete SMS or Email verification before PayPal checkout.' });
     }
 
     const accessToken = await generatePayPalAccessToken();
@@ -2739,7 +3124,7 @@ app.post('/api/payments/paypal/create-order', async (req, res) => {
     const merchantEmail = (runtimePayoutConfig.paypalMerchantEmail || '').trim();
     const purchaseUnit: Record<string, any> = {
       reference_id: existing.referenceCode,
-      description: `Liddy ${existing.planTier.toUpperCase()} (${existing.billingCycle})`,
+      description: `Liddy ${existing.planTier === 'day' ? '1-Day Pass' : existing.planTier.toUpperCase()} (${existing.billingCycle})`,
       amount: {
         currency_code: 'USD',
         value: amountUsd,
@@ -2798,11 +3183,9 @@ app.post('/api/payments/paypal/capture-order', async (req, res) => {
     if (!buyerEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(buyerEmail)) {
       return res.status(400).json({ error: 'A valid billing email is required.' });
     }
-    const firebasePhoneIdToken = String(body.firebasePhoneIdToken || '').trim();
-    const expectedPhone = String(body.verifiedPhoneNumber || '').trim();
-    const phoneCheck = await verifyFirebasePhoneIdToken(firebasePhoneIdToken, expectedPhone);
-    if (!phoneCheck.valid) {
-      return res.status(401).json({ error: phoneCheck.error || 'SMS phone verification failed.' });
+    const identityCheck = await verifyCheckoutIdentity(body);
+    if (!identityCheck.valid) {
+      return res.status(401).json({ error: identityCheck.error || 'Verification failed.' });
     }
 
     const accessToken = await generatePayPalAccessToken();
@@ -2858,6 +3241,11 @@ app.post('/api/payments/paypal/capture-order', async (req, res) => {
       createdAt: confirmed.createdAt,
     });
 
+    const verifiedNote =
+      identityCheck.method === 'sms'
+        ? `SMS verified (${identityCheck.label})`
+        : `Email OTP verified (${identityCheck.label})`;
+
     const receiptPayload = buildFormattedInvoiceEmailPayload({
       recipientEmail: confirmed.userEmail || '',
       buyerName: confirmed.userName || 'Liddy Member',
@@ -2866,7 +3254,7 @@ app.post('/api/payments/paypal/capture-order', async (req, res) => {
       date: confirmed.createdAt.split('T')[0],
       items: [
         {
-          description: `Liddy ${confirmed.planTier.toUpperCase()} Subscription (${confirmed.billingCycle})`,
+          description: `Liddy ${confirmed.planTier === 'day' ? '1-Day Pass' : confirmed.planTier.toUpperCase()} (${confirmed.billingCycle})`,
           quantity: 1,
           unitPrice: confirmed.amount,
           total: confirmed.amount,
@@ -2880,10 +3268,16 @@ app.post('/api/payments/paypal/capture-order', async (req, res) => {
       paymentRail: 'PAYPAL',
       connector: confirmed.connector,
       senderName: runtimePayoutConfig.payeeName || 'Liddy Workspace Billing',
-      notes: `Paid via PayPal (${payerEmail}) · Order ${orderId} · SMS verified (${phoneCheck.phoneNumber}).`,
+      notes: `Paid via PayPal (${payerEmail}) · Order ${orderId} · ${verifiedNote}.`,
     });
 
-    res.json({ ok: true, payment: confirmed, receiptEmail: receiptPayload, verifiedPhone: phoneCheck.phoneNumber });
+    res.json({
+      ok: true,
+      payment: confirmed,
+      receiptEmail: receiptPayload,
+      verifiedPhone: identityCheck.method === 'sms' ? identityCheck.label : undefined,
+      verifiedEmail: identityCheck.method === 'email' ? identityCheck.label : undefined,
+    });
   } catch (err: any) {
     recordFailure('error', 'Payments', 'POST /api/payments/paypal/capture-order', 500, err?.message || 'PayPal capture failed');
     res.status(500).json({ error: err?.message || 'Unable to capture PayPal payment.' });
@@ -2950,8 +3344,7 @@ app.post('/api/gemini/vision-mindmap', async (req, res) => {
 
   try {
     const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const response = await generateWithHydrogenFailover(ai, {
       contents: `Generate a structured visual mind map for: "${topic}".
 Return raw JSON only with keys:
 - "title": concise 4-7 word board title
@@ -2959,7 +3352,10 @@ Return raw JSON only with keys:
   First node MUST have id "n-root", parentId null, shape "hub", x: 350, y: 185.
   Other 5 nodes have parentId "n-root" (or another node's id), spaced cleanly in canvas x: 40..660, y: 40..340 with at least 190px apart so cards never overlap.
   Each node has: { id, label (max 36 chars), notes (max 90 chars), x, y, color ("indigo"|"sky"|"emerald"|"amber"|"rose"|"neutral"), shape ("hub"|"step"|"insight"|"metric"|"action"), metricTag (short 1-2 word badge like "Phase 1" or "Target"), parentId }.`,
-      config: { responseMimeType: 'application/json' },
+      config: {
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+      },
     });
 
     const raw = response.text?.trim() || '';
@@ -2978,67 +3374,262 @@ Return raw JSON only with keys:
 });
 
 // Dedicated Visual Slide Deck AI Generator (/api/gemini/vision-slides)
+const VALID_SLIDE_THEMES = new Set(['ivory', 'midnight', 'emerald', 'cobalt', 'ledger', 'navy', 'charcoal', 'growth']);
+const VALID_FONT_STYLES = new Set(['swiss_sans', 'editorial_serif', 'mono_quant', 'executive_geometric']);
+const VALID_CONTENT_STYLES = new Set(['short', 'brief', 'medium', 'detailed']);
+const VALID_GRAPHICS_STYLES = new Set(['charts', 'diagrams', 'cards', 'roadmap', 'minimal']);
+const VALID_SLIDE_LAYOUTS = ['cover', 'metrics', 'two-col', 'roadmap'] as const;
+
+function buildFinancialFallbackSlide(
+  index: number,
+  total: number,
+  topic: string,
+  opts: {
+    theme: string;
+    fontStyle: string;
+    contentStyle: string;
+    graphicsStyle: string;
+    audience: string;
+  }
+) {
+  const layout = index === 0 ? 'cover' : VALID_SLIDE_LAYOUTS[(index % 3) + 1];
+  const shortTopic = topic.slice(0, 52);
+  const bulletCount = opts.contentStyle === 'short' ? 2 : opts.contentStyle === 'detailed' ? 4 : 3;
+
+  const catalog = [
+    {
+      title: shortTopic,
+      subtitle: `${opts.audience} · Financial Brief & Executive Outlook`,
+      metricHighlight: 'FY Outlook',
+      bullets: [
+        'Primary financial objective, capital efficiency target & horizon',
+        'Key revenue drivers, expense discipline and reserve buffer ratios',
+        'Decision checkpoints aligned for stakeholder approval',
+        'Risk-adjusted upside scenarios with monthly variance tracking',
+      ],
+      chartBars: [
+        { label: 'Q1', value: 42 },
+        { label: 'Q2', value: 58 },
+        { label: 'Q3', value: 74 },
+        { label: 'Q4', value: 92 },
+      ],
+    },
+    {
+      title: 'Core Revenue & Cashflow KPIs',
+      subtitle: 'Operating performance & unit economics benchmark',
+      metricHighlight: '+28% YoY',
+      bullets: [
+        'Net operating cashflow margin expanded by +420 bps YoY',
+        'Recurring revenue share crossed 72% with stable collection velocity',
+        'Working capital runway maintained at 14+ months coverage',
+        'Customer acquisition payback reduced below 6.5 billing cycles',
+      ],
+      chartBars: [
+        { label: 'Rev', value: 86 },
+        { label: 'Gross', value: 68 },
+        { label: 'OpEx', value: 44 },
+        { label: 'FCF', value: 56 },
+      ],
+    },
+    {
+      title: 'Cost Structure & Margin Allocation',
+      subtitle: 'Disciplined capital deployment across core pillars',
+      metricHighlight: '74% Gross',
+      bullets: [
+        'Direct COGS & infrastructure optimized at 26% of gross receipts',
+        'Growth & customer acquisition capped inside a 3.8x LTV/CAC guardrail',
+        'Tax & contingency reserve set aside automatically each cycle',
+        'Fixed overhead kept lean with zero-based quarterly budget audits',
+      ],
+      chartBars: [
+        { label: 'Core', value: 74 },
+        { label: 'Growth', value: 48 },
+        { label: 'Reserve', value: 32 },
+        { label: 'Tax', value: 22 },
+      ],
+    },
+    {
+      title: '90-Day Capital Allocation Roadmap',
+      subtitle: 'Phased execution milestones & treasury checkpoints',
+      metricHighlight: '3 Phases',
+      bullets: [
+        'Phase 1: Lock quarterly budget ceilings & sweep surplus into T-bills',
+        'Phase 2: Reprice high-margin tiers & automate receivables follow-ups',
+        'Phase 3: Rebalance portfolio exposure & review Q4 dividend targets',
+        'Audit monthly ledger variance against conservative base case',
+      ],
+      chartBars: [
+        { label: 'P1', value: 35 },
+        { label: 'P2', value: 65 },
+        { label: 'P3', value: 95 },
+      ],
+    },
+    {
+      title: 'Scenario Stress Test & Downside Guardrails',
+      subtitle: 'Sensitivity analysis across base, bull & conservative cases',
+      metricHighlight: '14 Mo Runway',
+      bullets: [
+        'Base case sustains 22% EBITDA margin at current run-rate',
+        'Conservative -15% demand stress preserves positive net cashflow',
+        'Upside acceleration funds expansion strictly from operating surplus',
+        'Automated trigger halts discretionary spend if reserve dips < 6 mo',
+      ],
+      chartBars: [
+        { label: 'Bear', value: 45 },
+        { label: 'Base', value: 72 },
+        { label: 'Bull', value: 96 },
+      ],
+    },
+    {
+      title: 'Portfolio & Treasury Yield Mix',
+      subtitle: 'Balanced liquidity, equities & fixed-income weighting',
+      metricHighlight: '11.4% IRR',
+      bullets: [
+        'Core index & dividend equities form 55% long-horizon anchor',
+        'Sovereign bonds & liquid treasury funds hold 30% shock buffer',
+        'Tactical cash reserve retains 15% dry powder for dips',
+        'Quarterly rebalance enforces strict +/- 5% drift bands',
+      ],
+      chartBars: [
+        { label: 'Equity', value: 55 },
+        { label: 'Bonds', value: 30 },
+        { label: 'Cash', value: 15 },
+      ],
+    },
+  ];
+
+  const tpl = catalog[index % catalog.length];
+  const suffixTitle =
+    index >= catalog.length ? `${tpl.title} — Part ${index + 1}` : tpl.title;
+  const trimmedBullets = tpl.bullets.slice(0, bulletCount).map((b) =>
+    opts.contentStyle === 'short' ? b.split(',')[0].slice(0, 56) : b
+  );
+
+  return {
+    id: `s-${index + 1}`,
+    title: index === 0 ? shortTopic : suffixTitle,
+    subtitle: index === 0 ? `${opts.audience} · ${total}-Slide Financial Deck` : tpl.subtitle,
+    bullets: trimmedBullets,
+    layout,
+    theme: opts.theme,
+    fontStyle: opts.fontStyle,
+    contentStyle: opts.contentStyle,
+    graphicsStyle: opts.graphicsStyle,
+    metricHighlight: tpl.metricHighlight,
+    chartBars: tpl.chartBars,
+  };
+}
+
 app.post('/api/gemini/vision-slides', async (req, res) => {
   const topic = String(req.body?.topic || '').trim();
-  const theme = (['midnight', 'ivory', 'emerald', 'cobalt'].includes(req.body?.theme) ? req.body.theme : 'midnight') as 'midnight' | 'ivory' | 'emerald' | 'cobalt';
   if (!topic) {
-    return res.status(400).json({ error: 'Enter a topic to build slides.' });
+    return res.status(400).json({ error: 'Enter a financial topic to build slides.' });
   }
 
-  const fallbackSlides = {
-    title: topic.slice(0, 72),
-    slides: [
-      {
-        id: 's-1',
-        title: topic.slice(0, 60),
-        subtitle: 'Overview, Key Objectives & Next Steps',
-        bullets: ['Clear focus tailored for fast team alignment', 'Practical budget and timeline milestones', 'Ready to share or present anywhere'],
-        layout: 'cover',
+  const parsedCount = Number(req.body?.slideCount);
+  const slideCount = Number.isFinite(parsedCount) ? Math.min(15, Math.max(4, Math.round(parsedCount))) : 6;
+  const theme = VALID_SLIDE_THEMES.has(req.body?.theme) ? String(req.body.theme) : 'ivory';
+  const fontStyle = VALID_FONT_STYLES.has(req.body?.fontStyle) ? String(req.body.fontStyle) : 'swiss_sans';
+  const contentStyle = VALID_CONTENT_STYLES.has(req.body?.contentStyle) ? String(req.body.contentStyle) : 'medium';
+  const graphicsStyle = VALID_GRAPHICS_STYLES.has(req.body?.graphicsStyle) ? String(req.body.graphicsStyle) : 'charts';
+  const audience = String(req.body?.audience || 'Executive & Financial Review').trim().slice(0, 60);
+
+  const normalizeSlideDeck = (rawTitle: string | undefined, rawSlides: any[]) => {
+    const cleanSlides: any[] = [];
+    for (let i = 0; i < slideCount; i++) {
+      const candidate = Array.isArray(rawSlides) ? rawSlides[i] : null;
+      const fallback = buildFinancialFallbackSlide(i, slideCount, topic, {
         theme,
-        metricHighlight: 'Q1 Plan',
-      },
-      {
-        id: 's-2',
-        title: 'Key Numbers & Success Targets',
-        subtitle: 'Measurable progress checkpoints',
-        bullets: ['Primary goal target: 100% milestone completion', 'Estimated efficiency gain: +35% faster delivery', 'Monthly check-in cadence with clear ownership'],
-        layout: 'metrics',
-        theme,
-        metricHighlight: '+35% Pace',
-      },
-      {
-        id: 's-3',
-        title: 'Two-Side Priority Comparison',
-        subtitle: 'What matters most right now',
-        bullets: ['Focus First: Core deliverables & customer feedback', 'Defer Later: Nice-to-have extras', 'Daily Habit: Keep spending & notes updated'],
-        layout: 'two-col',
-        theme,
-      },
-      {
-        id: 's-4',
-        title: 'Three-Step Action Timeline',
-        subtitle: 'Clear path from kickoff to finish',
-        bullets: ['Phase 1: Align goals and finalize budget', 'Phase 2: Build prototype and test with users', 'Phase 3: Review outcomes and scale'],
-        layout: 'roadmap',
-        theme,
-      },
-    ],
+        fontStyle,
+        contentStyle,
+        graphicsStyle,
+        audience,
+      });
+
+      if (candidate && typeof candidate === 'object') {
+        const bulletsRaw = Array.isArray(candidate.bullets)
+          ? candidate.bullets.map((b: any) => String(b || '').trim()).filter(Boolean)
+          : [];
+        const targetCount = contentStyle === 'short' ? 2 : contentStyle === 'detailed' ? 4 : 3;
+        const normalizedBullets =
+          bulletsRaw.length > 0 ? bulletsRaw.slice(0, targetCount) : fallback.bullets;
+        const bars = Array.isArray(candidate.chartBars)
+          ? candidate.chartBars
+              .slice(0, 5)
+              .map((b: any) => ({
+                label: String(b?.label || 'M').slice(0, 10),
+                value: Math.max(5, Math.min(100, Number(b?.value) || 50)),
+              }))
+          : fallback.chartBars;
+        cleanSlides.push({
+          id: `s-${i + 1}`,
+          title: String(candidate.title || fallback.title).slice(0, 68),
+          subtitle: String(candidate.subtitle || fallback.subtitle).slice(0, 96),
+          bullets: normalizedBullets,
+          layout: VALID_SLIDE_LAYOUTS.includes(candidate.layout) ? candidate.layout : fallback.layout,
+          theme,
+          fontStyle,
+          contentStyle,
+          graphicsStyle,
+          metricHighlight: candidate.metricHighlight ? String(candidate.metricHighlight).slice(0, 28) : fallback.metricHighlight,
+          chartBars: bars,
+        });
+      } else {
+        cleanSlides.push(fallback);
+      }
+    }
+
+    return {
+      title: String(rawTitle || topic).slice(0, 76),
+      slides: cleanSlides,
+    };
   };
 
+  const fallbackDeck = normalizeSlideDeck(topic, []);
+
   if (shouldSkipGeminiCall()) {
-    return res.json(fallbackSlides);
+    return res.json(fallbackDeck);
   }
+
+  const densityInstruction =
+    contentStyle === 'short'
+      ? 'Keep each slide ultra-minimal: strictly 2 punchy bullets of max 8 words each.'
+      : contentStyle === 'brief'
+      ? 'Keep text concise: strictly 2–3 tight executive points under 12 words each.'
+      : contentStyle === 'detailed'
+      ? 'Provide rich analytical depth: strictly 4 data-backed bullets (15–22 words each) with realistic metrics.'
+      : 'Keep balanced clarity: 3 concrete bullets (10–15 words each).';
 
   try {
     const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents: `Create an engaging, visually structured 4-slide presentation deck about: "${topic}".
+    const response = await generateWithHydrogenFailover(ai, {
+      contents: `You are a senior financial presentation architect (inspired by Gamma & Swiss financial reporting).
+Create a strictly finance-focused, investor-grade ${slideCount}-slide presentation deck about: "${topic}".
+Target Audience: "${audience}".
+Graphics Preference: "${graphicsStyle}".
+Content Density Rule: ${densityInstruction}
+
+CRITICAL REQUIREMENTS:
+1. Stay 100% focused on finance, budgeting, revenue, investments, margins, cashflow, or financial goals.
+2. You MUST return an array of EXACTLY ${slideCount} slide objects in "slides" (no more, no fewer than ${slideCount}).
+
 Return raw JSON only with keys:
-- "title": crisp presentation title
-- "slides": array of 4 slides covering layouts "cover", "metrics", "two-col", "roadmap" in varied order.
-  Each slide has: { id ("s-1", etc.), title (max 55 chars), subtitle (max 80 chars), bullets (array of 3 punchy strings, max 85 chars each), layout ("cover"|"metrics"|"two-col"|"roadmap"), theme ("${theme}"), metricHighlight (concise stat like "$25K Saved" or "Week 1-4") }.`,
-      config: { responseMimeType: 'application/json' },
+- "title": crisp financial presentation title
+- "slides": array of EXACTLY ${slideCount} slides with varied layouts ("cover", "metrics", "two-col", "roadmap").
+  Each slide object MUST contain:
+  {
+    id: "s-1", "s-2", ..., "s-${slideCount}",
+    title: string (max 60 chars),
+    subtitle: string (max 85 chars),
+    bullets: string[],
+    layout: "cover" | "metrics" | "two-col" | "roadmap",
+    metricHighlight: string (concise financial figure like "$142K MRR", "+28% YoY", "18 Mo Runway"),
+    chartBars: array of 3-4 objects { label: short 2-6 char label like "Q1" or "Rev", value: integer 15..100 }
+  }.`,
+      config: {
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+      },
     });
 
     const raw = response.text?.trim() || '';
@@ -3046,13 +3637,13 @@ Return raw JSON only with keys:
       const clean = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
       const parsed = JSON.parse(clean);
       if (Array.isArray(parsed?.slides) && parsed.slides.length > 0) {
-        return res.json(parsed);
+        return res.json(normalizeSlideDeck(parsed.title, parsed.slides));
       }
     }
-    res.json(fallbackSlides);
+    res.json(fallbackDeck);
   } catch (err: any) {
     markQuotaExhausted(err);
-    res.json(fallbackSlides);
+    res.json(fallbackDeck);
   }
 });
 
@@ -3212,6 +3803,107 @@ const FINANCIAL_AGENT_TOOLS: FunctionDeclaration[] = [
       },
     },
   },
+  {
+    name: 'generate_visual_dashboard',
+    description:
+      'Render one or more interactive visual charts (bar, pie, or area) inside the chat response from extracted bill PDFs, CSVs, or workspace ledger numbers.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        charts: {
+          type: Type.ARRAY,
+          description: 'Up to 3 visual charts to display inside the response.',
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              subtitle: { type: Type.STRING },
+              chartType: { type: Type.STRING, description: 'bar | pie | area' },
+              valuePrefix: { type: Type.STRING, description: 'Currency symbol or blank for counts' },
+              data: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    name: { type: Type.STRING },
+                    value: { type: Type.NUMBER },
+                    secondaryValue: { type: Type.NUMBER },
+                  },
+                  required: ['name', 'value'],
+                },
+              },
+            },
+            required: ['title', 'chartType', 'data'],
+          },
+        },
+      },
+      required: ['charts'],
+    },
+  },
+  {
+    name: 'export_csv_dashboard',
+    description:
+      'Generate a structured downloadable CSV dashboard file containing extracted bill line items, financial metrics, or ledger breakdown rows.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        filename: { type: Type.STRING, description: 'File name ending in .csv' },
+        title: { type: Type.STRING },
+        headers: { type: Type.ARRAY, items: { type: Type.STRING } },
+        rows: {
+          type: Type.ARRAY,
+          items: { type: Type.ARRAY, items: { type: Type.STRING } },
+        },
+      },
+      required: ['filename', 'title', 'headers', 'rows'],
+    },
+  },
+  {
+    name: 'export_pdf_report',
+    description:
+      'Compile a downloadable formatted PDF financial report with executive KPIs, bulleted insights, and structured line-item or summary tables.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        filename: { type: Type.STRING, description: 'File name ending in .pdf' },
+        title: { type: Type.STRING },
+        subtitle: { type: Type.STRING },
+        kpis: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              label: { type: Type.STRING },
+              value: { type: Type.STRING },
+            },
+            required: ['label', 'value'],
+          },
+        },
+        sections: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              heading: { type: Type.STRING },
+              bullets: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+            required: ['heading', 'bullets'],
+          },
+        },
+        table: {
+          type: Type.OBJECT,
+          properties: {
+            headers: { type: Type.ARRAY, items: { type: Type.STRING } },
+            rows: {
+              type: Type.ARRAY,
+              items: { type: Type.ARRAY, items: { type: Type.STRING } },
+            },
+          },
+        },
+      },
+      required: ['filename', 'title', 'kpis', 'sections'],
+    },
+  },
 ];
 
 function inferCleanCategory(merchant: string, currentCategory: string): string {
@@ -3264,16 +3956,254 @@ function isIncomeLikeTransaction(tx: any): boolean {
   );
 }
 
+function isPrivateOrUnsafeHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().trim();
+  if (!h || h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0.0.0.0' || h.endsWith('.local')) {
+    return true;
+  }
+  if (/^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
+  const match172 = h.match(/^172\.(\d+)\./);
+  if (match172 && Number(match172[1]) >= 16 && Number(match172[1]) <= 31) return true;
+  return false;
+}
+
+function parseJsonOrSsePayload(rawText: string, contentType: string): any {
+  const trimmed = String(rawText || '').trim();
+  if (!trimmed) return null;
+  if (!contentType.includes('text/event-stream')) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      // Fall through to SSE line scan
+    }
+  }
+  const lines = trimmed.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line.startsWith('data:')) {
+      const payload = line.slice(5).trim();
+      if (!payload || payload === '[DONE]') continue;
+      try {
+        return JSON.parse(payload);
+      } catch {
+        continue;
+      }
+    }
+  }
+  return null;
+}
+
+app.get('/api/skills/search', async (req, res) => {
+  const queryText = String(req.query?.q || '').trim().slice(0, 120);
+  const qLower = queryText.toLowerCase();
+
+  const matchingCurated = CURATED_FINANCE_SKILLS.filter((item) => {
+    if (!qLower) return true;
+    const hay = `${item.name} ${item.slug} ${item.category} ${item.description} ${item.triggers}`.toLowerCase();
+    return hay.includes(qLower);
+  });
+
+  const liveSkills: typeof CURATED_FINANCE_SKILLS = [];
+  if (queryText.length >= 2) {
+    try {
+      const registryUrl = `https://skills.sh/api/skills?q=${encodeURIComponent(queryText)}&limit=10`;
+      const upstream = await fetch(registryUrl, {
+        headers: { Accept: 'application/json', 'User-Agent': 'LiddyFinanceAgent/1.0' },
+        signal: AbortSignal.timeout(3500),
+      });
+      if (upstream.ok) {
+        const body = await upstream.json().catch(() => null);
+        const rows = Array.isArray(body?.skills) ? body.skills : Array.isArray(body) ? body : [];
+        for (const r of rows.slice(0, 10)) {
+          const slug = String(r?.slug || r?.skillId || r?.id || r?.name || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9-_]/g, '-')
+            .slice(0, 80);
+          if (!slug) continue;
+          const name = String(r?.name || r?.title || slug).slice(0, 100);
+          const desc = String(r?.description || r?.summary || `Community skill imported from skills.sh (${slug}).`).slice(0, 260);
+          const repo = String(r?.source || r?.repo || `skills.sh/${slug}`).slice(0, 120);
+          liveSkills.push({
+            id: `skill_sh_${slug}`,
+            slug,
+            name,
+            description: desc,
+            category: String(r?.category || 'skills.sh Registry').slice(0, 48),
+            author: String(r?.author || r?.owner || 'skills.sh').slice(0, 60),
+            repo,
+            installs: Number(r?.installs || r?.downloads || 0) || 0,
+            triggers: String(r?.triggers || slug.replace(/-/g, ', ')).slice(0, 140),
+            sourceUrl: r?.url ? String(r.url) : `https://skills.sh/skills/${slug}`,
+            instructionsMarkdown:
+              typeof r?.instructionsMarkdown === 'string' && r.instructionsMarkdown.trim()
+                ? r.instructionsMarkdown.slice(0, 12000)
+                : `---\nname: ${slug}\ndescription: ${desc}\nsource: ${repo}\n---\n\n# ${name}\n\n## Role & Guidelines\n- Apply ${desc}\n- Adapt all computations, audit notes, charts, and CSV/PDF outputs to the user's financial workspace context.`,
+          });
+        }
+      }
+    } catch {
+      // Upstream timeout or unreachable — gracefully rely on curated finance skills library
+    }
+  }
+
+  const seenSlugs = new Set<string>();
+  const combined: typeof CURATED_FINANCE_SKILLS = [];
+  for (const item of [...liveSkills, ...matchingCurated]) {
+    if (seenSlugs.has(item.slug)) continue;
+    seenSlugs.add(item.slug);
+    combined.push(item);
+  }
+
+  res.json({
+    skills: combined,
+    source: liveSkills.length > 0 ? 'skills.sh+curated' : 'curated',
+  });
+});
+
+app.post('/api/mcp/inspect', async (req, res) => {
+  const started = Date.now();
+  const endpointUrl = String(req.body?.endpointUrl || '').trim().slice(0, 512);
+  const transport = String(req.body?.transport || 'http');
+  const authType = String(req.body?.authType || 'none');
+  const authToken = typeof req.body?.authToken === 'string' ? req.body.authToken.trim().slice(0, 512) : '';
+
+  const catalogMatch = MCP_CONNECTOR_TEMPLATES.find((t) => t.endpointUrl === endpointUrl);
+  if (catalogMatch && !authToken) {
+    return res.json({
+      ok: true,
+      serverName: catalogMatch.name,
+      protocolVersion: '2025-03-26',
+      tools: catalogMatch.toolsList,
+      latencyMs: Date.now() - started,
+    });
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(endpointUrl);
+  } catch {
+    return res.status(400).json({ ok: false, tools: [], error: 'Enter a valid HTTP/HTTPS MCP endpoint URL.' });
+  }
+
+  if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+    return res.status(400).json({ ok: false, tools: [], error: 'Only http:// and https:// MCP endpoints are supported.' });
+  }
+  if (isPrivateOrUnsafeHost(parsedUrl.hostname)) {
+    return res.status(400).json({
+      ok: false,
+      tools: [],
+      error: 'Localhost and private network IP addresses cannot be inspected from the cloud sandbox.',
+    });
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+  };
+  if (authToken) {
+    if (authType === 'api_key') {
+      headers['x-api-key'] = authToken;
+    } else {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+  }
+
+  try {
+    const initResp = await fetch(parsedUrl.toString(), {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'Liddy-AI-CFO', version: '1.0.0' },
+        },
+      }),
+      signal: AbortSignal.timeout(4500),
+    });
+
+    const initSessionId = initResp.headers.get('mcp-session-id');
+    const initText = await initResp.text();
+    const initJson = parseJsonOrSsePayload(initText, initResp.headers.get('content-type') || '');
+
+    if (!initResp.ok && initResp.status >= 400) {
+      return res.json({
+        ok: false,
+        tools: [],
+        latencyMs: Date.now() - started,
+        error: `Remote server responded with HTTP ${initResp.status}. Verify endpoint URL and credentials.`,
+      });
+    }
+
+    const listHeaders: Record<string, string> = { ...headers };
+    if (initSessionId) listHeaders['mcp-session-id'] = initSessionId;
+
+    let discoveredTools: string[] = [];
+    try {
+      const toolsResp = await fetch(parsedUrl.toString(), {
+        method: 'POST',
+        headers: listHeaders,
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+        signal: AbortSignal.timeout(4000),
+      });
+      const toolsText = await toolsResp.text();
+      const toolsJson = parseJsonOrSsePayload(toolsText, toolsResp.headers.get('content-type') || '');
+      const rawTools = toolsJson?.result?.tools;
+      if (Array.isArray(rawTools)) {
+        discoveredTools = rawTools
+          .map((t: any) => String(t?.name || '').trim())
+          .filter(Boolean)
+          .slice(0, 40);
+      }
+    } catch {
+      // Some minimal servers only return capabilities on initialize
+    }
+
+    return res.json({
+      ok: true,
+      serverName: String(initJson?.result?.serverInfo?.name || parsedUrl.hostname),
+      protocolVersion: String(initJson?.result?.protocolVersion || '2025-03-26'),
+      tools: discoveredTools,
+      latencyMs: Date.now() - started,
+    });
+  } catch (err: any) {
+    return res.json({
+      ok: false,
+      tools: [],
+      latencyMs: Date.now() - started,
+      error: err?.name === 'TimeoutError'
+        ? 'MCP endpoint timed out after 4.5s.'
+        : `Unable to complete MCP handshake (${err?.message || 'network error'}).`,
+    });
+  }
+});
+
 app.post('/api/gemini/agent', async (req, res) => {
   const FRIENDLY_ERROR =
     "Sorry, I wasn't able to proceed with that request right now. Please try again in a moment.";
 
   if (shouldSkipGeminiCall()) {
-    return res.status(503).json({ error: FRIENDLY_ERROR });
+    const isMissingKey = !(process.env.API_KEY || process.env.GEMINI_API_KEY);
+    return res.status(503).json({
+      error: isMissingKey
+        ? 'Gemini API key is not configured yet. Add GEMINI_API_KEY in Settings > Secrets.'
+        : 'AI assistant is briefly cooling down after a rate limit. Please try again in a few seconds.',
+    });
   }
 
   try {
-    const { prompt, mode = 'chat', attachment, history = [], financialContext } = req.body || {};
+    const {
+      prompt,
+      mode = 'chat',
+      attachment,
+      history = [],
+      financialContext,
+      activeSkills = [],
+      activeConnectors = [],
+    } = req.body || {};
     const ai = getAiClient();
 
     const safeTxList: any[] = Array.isArray(financialContext?.transactions)
@@ -3295,30 +4225,100 @@ app.post('/api/gemini/agent', async (req, res) => {
     const pendingDeletesSet = new Set<string>();
     const pendingInvoicePaid: Array<{ id: string; paymentMethod?: string }> = [];
     const activatedToolsSet = new Set<string>();
+    const collectedCharts: Array<{
+      id: string;
+      title: string;
+      subtitle?: string;
+      chartType: 'bar' | 'pie' | 'trend';
+      currencySymbol?: string;
+      data: Array<{ label: string; value: number; secondaryValue?: number }>;
+    }> = [];
+    let collectedCsvExport: {
+      filename: string;
+      title: string;
+      headers: string[];
+      rows: string[][];
+      rowCount: number;
+      csvContent: string;
+    } | null = null;
+    let collectedPdfReport: {
+      filename: string;
+      title: string;
+      subtitle?: string;
+      generatedAt: string;
+      currencySymbol?: string;
+      kpis: Array<{ label: string; value: string }>;
+      sections: Array<{
+        heading: string;
+        bullets?: string[];
+        table?: { headers: string[]; rows: Array<Array<string | number>> };
+      }>;
+    } | null = null;
 
+    const safeActiveSkills = Array.isArray(activeSkills) ? activeSkills.slice(0, 12) : [];
+    const safeActiveConnectors = Array.isArray(activeConnectors) ? activeConnectors.slice(0, 14) : [];
+
+    const startedAt = Date.now();
     const promptLower = String(prompt || '').toLowerCase();
-    const wantsWebLookup =
-      mode === 'web' ||
-      /\b(live|today|current|latest|news|stock price|share price|nifty|sensex|nasdaq|s&p|repo rate|fed|rbi|inflation|cpi|bitcoin|usd to inr|exchange rate|market)\b/.test(
+    const isMutationOrAuditIntent = /\b(cleanse|deduplicate|normalize|delete transaction|remove transaction|add transaction|record expense|log expense|update transaction|mark .* paid|settle invoice|audit invoices|clean my ledger|fix categories)\b/i.test(
+      promptLower
+    );
+    const isArtifactOrAnalysisIntent =
+      Boolean(attachment?.data) ||
+      /\b(visuali[sz]e|chart|graph|dashboard|csv|excel|spreadsheet|pdf|report|extract|analy[sz]e|bill|invoice|receipt|statement|summary|breakdown)\b/i.test(
         promptLower
       );
+    const wantsFunctions = mode === 'agent' || isMutationOrAuditIntent || isArtifactOrAnalysisIntent;
+    const wantsWebLookup =
+      !attachment?.data &&
+      (mode === 'web' ||
+        (mode === 'chat' &&
+          !isMutationOrAuditIntent &&
+          !isArtifactOrAnalysisIntent &&
+          /\b(live price|current price|latest news|stock price|share price|nifty|sensex|nasdaq|s&p 500|repo rate|fed rate|rbi rate|cpi inflation|bitcoin price|usd to inr|exchange rate)\b/.test(
+            promptLower
+          )));
 
     let systemInstruction =
-      'You are Liddy, a specialized AI Chief Financial Officer and financial operations advisor. ' +
-      'STRICT SCOPE GUARDRAIL: You must ONLY assist with financial tasks—personal finance, expense ledger analysis, bookkeeping, data cleansing, categorizing receipts, invoice audits, tax planning, portfolio valuation, budgeting, financial ratios, cashflow modeling, and live market research. ' +
+      'You are Liddy, a specialized AI Chief Financial Officer and agentic financial operations advisor. ' +
+      'STRICT SCOPE GUARDRAIL: You must ONLY assist with financial tasks—personal finance, expense ledger analysis, bookkeeping, data cleansing, parsing bill PDFs/receipts/CSVs, generating visual dashboards, CSV exports, PDF reports, invoice audits, tax planning, portfolio valuation, budgeting, financial ratios, cashflow modeling, and live market research. ' +
       'If a user asks for non-financial tasks (such as coding unrelated software, creative fiction, medical advice, general trivia, or non-financial automation), politely decline tool execution and redirect them to how you can help with their finances instead. ' +
-      'AUTONOMOUS FINANCIAL EXECUTION: Whenever the user asks you to analyze data, inspect anomalies, clean/deduplicate/categorize their ledger, record or edit entries, audit invoices, or compute ratios, proactively activate the right financial skills and call the financial tools automatically—do not ask the user to click buttons manually when you can execute via tool calls. ' +
-      `All monetary figures default to workspace currency "${currencySym}". Present clear tables and summarize every financial change applied.`;
+      `All monetary figures default to workspace currency "${currencySym}". Be concise, structured, and direct.`;
 
-    if (mode === 'agent') {
+    if (mode === 'agent' || isMutationOrAuditIntent || isArtifactOrAnalysisIntent) {
       systemInstruction +=
-        ' AGENT MODE ACTIVE: Operate autonomously end-to-end across multiple steps—first activate_financial_skill if helpful, inspect current ledger/invoices/portfolio, execute cleanse_ledger_data / add_or_update_transactions / delete_transactions / audit_invoices_and_receivables automatically when requested, and report exact itemized results.';
+        ' AGENTIC EXECUTION & DELIVERABLES: When the user uploads a bill PDF/image/CSV or asks for visualizations, dashboards, CSV files, or PDF reports, you MUST actively call generate_visual_dashboard (for inline interactive charts), export_csv_dashboard (for structured .csv spreadsheets), and/or export_pdf_report (for downloadable executive .pdf reports) alongside ledger/invoice tools. Extract real figures, dates, tax, and line items accurately from any uploaded bill.';
     } else if (mode === 'web') {
       systemInstruction +=
-        ' WEB GROUNDING MODE ACTIVE: Prioritize Google Search grounding for live market prices, macro rates, earnings, and financial news, alongside portfolio/ledger tools when relevant.';
+        ' WEB GROUNDING: Use Google Search grounding for live market quotes, macro rates, earnings, and financial news.';
     } else if (mode === 'ocr') {
       systemInstruction +=
-        ' DOCUMENT VISION MODE ACTIVE: Inspect attached receipts, invoices, or bank statements, extract line items/totals/dates, and offer or record clean structured transactions via tools.';
+        ' DOCUMENT VISION: Inspect attached receipts, invoices, or statements and extract crisp line items, dates, and totals.';
+    }
+
+    if (safeActiveSkills.length > 0) {
+      const skillsPromptBlock = safeActiveSkills
+        .map((sk: any) => {
+          const title = String(sk?.name || sk?.slug || 'Custom Skill').slice(0, 80);
+          const body = String(sk?.instructionsMarkdown || '').trim().slice(0, 900);
+          return `### Skill: ${title} (${String(sk?.category || 'Finance').slice(0, 40)})\n${body}`;
+        })
+        .join('\n\n')
+        .slice(0, 4500);
+      systemInstruction += `\n\n[ACTIVE USER SKILLS (SKILL.md)]\nFollow these installed financial playbooks automatically whenever relevant:\n${skillsPromptBlock}`;
+    }
+
+    if (safeActiveConnectors.length > 0) {
+      const mcpBlock = safeActiveConnectors
+        .map((c: any) => {
+          const toolsStr = Array.isArray(c?.toolsList) && c.toolsList.length > 0
+            ? `tools=[${c.toolsList.slice(0, 8).join(', ')}]`
+            : 'tools=[mcp-ready]';
+          return `- ${String(c?.name || c?.slug || 'MCP Connector').slice(0, 80)} (${String(c?.transport || 'http')} · ${toolsStr})`;
+        })
+        .join('\n')
+        .slice(0, 1800);
+      systemInstruction += `\n\n[CONNECTED MCP SERVERS]\n${mcpBlock}\nBuilt-in Liddy MCP tools execute live against workspace state; for external remote MCP connectors not directly bridged in the cloud sandbox, note clearly what data was used from the workspace vs what requires remote credentials.`;
     }
 
     const executeFinancialTool = (name: string, args: any) => {
@@ -3604,6 +4604,7 @@ app.post('/api/gemini/agent', async (req, res) => {
         const paidInvoicesTotal = workingInvoices
           .filter((i) => i.paymentStatus === 'paid')
           .reduce((s, i) => s + (Number(i.grandTotal) || 0), 0);
+
         const totalRevenue = inflow + paidInvoicesTotal + (Number(args?.monthlyIncomeAssumption) || 0);
         const savingsRatePct = totalRevenue > 0 ? ((totalRevenue - outflow) / totalRevenue) * 100 : 0;
 
@@ -3630,57 +4631,311 @@ app.post('/api/gemini/agent', async (req, res) => {
         };
       }
 
+      if (name === 'generate_visual_dashboard') {
+        const rawCharts = Array.isArray(args?.charts) ? args.charts : [];
+        let created = 0;
+        for (const ch of rawCharts.slice(0, 3)) {
+          const dataRows = Array.isArray(ch?.data)
+            ? ch.data
+                .slice(0, 16)
+                .map((d: any) => ({
+                  label: String(d?.label || d?.name || 'Item').slice(0, 28),
+                  value: Math.round((Number(d?.value) || 0) * 100) / 100,
+                  ...(d?.secondaryValue !== undefined
+                    ? { secondaryValue: Math.round((Number(d.secondaryValue) || 0) * 100) / 100 }
+                    : {}),
+                }))
+                .filter((d: any) => Number.isFinite(d.value))
+            : [];
+          if (dataRows.length === 0) continue;
+          const chartType: 'bar' | 'pie' | 'trend' =
+            ch?.chartType === 'pie'
+              ? 'pie'
+              : ch?.chartType === 'area' || ch?.chartType === 'trend'
+              ? 'trend'
+              : 'bar';
+          collectedCharts.push({
+            id: `chart_${Date.now()}_${collectedCharts.length + 1}`,
+            title: String(ch?.title || 'Financial Breakdown').slice(0, 90),
+            subtitle: ch?.subtitle ? String(ch.subtitle).slice(0, 140) : undefined,
+            chartType,
+            currencySymbol: ch?.valuePrefix !== undefined ? String(ch.valuePrefix).slice(0, 6) : currencySym,
+            data: dataRows,
+          });
+          created += 1;
+        }
+        return { status: 'rendered', chartCount: created };
+      }
+
+      if (name === 'export_csv_dashboard') {
+        const safeHeaders = Array.isArray(args?.headers)
+          ? args.headers.map((h: any) => String(h || 'Column').slice(0, 60)).slice(0, 14)
+          : ['Item', 'Category', 'Amount'];
+        const safeRows = Array.isArray(args?.rows)
+          ? args.rows.slice(0, 200).map((r: any) =>
+              Array.isArray(r) ? r.slice(0, safeHeaders.length).map((c: any) => String(c ?? '').slice(0, 180)) : [String(r ?? '')]
+            )
+          : [];
+        const escapeCsvCell = (val: string) => {
+          const clean = String(val ?? '');
+          return /[",\n\r]/.test(clean) ? `"${clean.replace(/"/g, '""')}"` : clean;
+        };
+        const csvContent = [
+          safeHeaders.map(escapeCsvCell).join(','),
+          ...safeRows.map((row: string[]) => row.map(escapeCsvCell).join(',')),
+        ].join('\n');
+        const baseName = String(args?.filename || 'liddy-financial-dashboard.csv')
+          .replace(/[^a-zA-Z0-9._-]/g, '-')
+          .replace(/(\.csv)?$/i, '.csv');
+        collectedCsvExport = {
+          filename: baseName,
+          title: String(args?.title || 'Financial CSV Dashboard').slice(0, 100),
+          headers: safeHeaders,
+          rows: safeRows,
+          rowCount: safeRows.length,
+          csvContent,
+        };
+        return {
+          status: 'generated',
+          filename: baseName,
+          rowCount: safeRows.length,
+          columns: safeHeaders.length,
+        };
+      }
+
+      if (name === 'export_pdf_report') {
+        const baseName = String(args?.filename || 'liddy-financial-report.pdf')
+          .replace(/[^a-zA-Z0-9._-]/g, '-')
+          .replace(/(\.pdf)?$/i, '.pdf');
+        const kpis = Array.isArray(args?.kpis)
+          ? args.kpis.slice(0, 6).map((k: any) => ({
+              label: String(k?.label || 'Metric').slice(0, 40),
+              value: String(k?.value || '0').slice(0, 40),
+            }))
+          : [];
+        const sections: Array<{
+          heading: string;
+          bullets?: string[];
+          table?: { headers: string[]; rows: Array<Array<string | number>> };
+        }> = Array.isArray(args?.sections)
+          ? args.sections.slice(0, 6).map((s: any) => ({
+              heading: String(s?.heading || 'Analysis').slice(0, 80),
+              bullets: Array.isArray(s?.bullets)
+                ? s.bullets.slice(0, 8).map((b: any) => String(b || '').slice(0, 220))
+                : [],
+            }))
+          : [];
+        const table =
+          args?.table && Array.isArray(args.table.headers) && Array.isArray(args.table.rows)
+            ? {
+                headers: args.table.headers.slice(0, 8).map((h: any) => String(h || '').slice(0, 40)),
+                rows: args.table.rows.slice(0, 40).map((r: any) =>
+                  Array.isArray(r) ? r.slice(0, 8).map((c: any) => String(c ?? '').slice(0, 60)) : []
+                ),
+              }
+            : undefined;
+        if (table && table.headers.length > 0 && table.rows.length > 0) {
+          sections.push({
+            heading: 'Structured Data Breakdown',
+            bullets: [],
+            table,
+          });
+        }
+        collectedPdfReport = {
+          filename: baseName,
+          title: String(args?.title || 'Executive Financial Report').slice(0, 100),
+          subtitle: args?.subtitle ? String(args.subtitle).slice(0, 140) : undefined,
+          generatedAt: new Date().toISOString().split('T')[0],
+          currencySymbol: currencySym,
+          kpis,
+          sections,
+        };
+        return { status: 'compiled', filename: baseName, kpiCount: kpis.length, sectionCount: sections.length };
+      }
+
       return { error: 'Tool not applicable outside financial workflows.' };
     };
 
-    const contents: any[] = Array.isArray(history)
+    // Precompute deterministic digest so chat/web responses answer immediately without extra tool round-trips
+    const quickLedgerSummary = executeFinancialTool('analyze_ledger_and_cashflow', {});
+    const quickRatioSummary = executeFinancialTool('analyze_financial_ratios_and_portfolio', {});
+    // Reset activatedToolsSet since precomputation is passive context, not a user-visible tool step
+    activatedToolsSet.clear();
+
+    const rawHistory: Array<{ role: 'user' | 'model'; text: string }> = Array.isArray(history)
       ? history
           .filter((h: any) => h && (h.role === 'user' || h.role === 'model') && typeof h.text === 'string' && h.text.trim())
-          .slice(-8)
-          .map((h: any) => ({ role: h.role, parts: [{ text: h.text }] }))
+          .slice(-6)
+          .map((h: any) => ({ role: h.role as 'user' | 'model', text: String(h.text).trim().slice(0, 1200) }))
       : [];
 
+    while (rawHistory.length > 0 && rawHistory[0].role !== 'user') {
+      rawHistory.shift();
+    }
+    const contents: any[] = [];
+    for (const h of rawHistory) {
+      const prev = contents[contents.length - 1];
+      if (prev && prev.role === h.role) {
+        prev.parts[0].text += `\n${h.text}`;
+      } else {
+        contents.push({ role: h.role, parts: [{ text: h.text }] });
+      }
+    }
+
+    const digestCats = Array.isArray((quickLedgerSummary as any).categoryBreakdown)
+      ? (quickLedgerSummary as any).categoryBreakdown
+          .slice(0, 6)
+          .map((c: any) => `${c.category}: ${currencySym}${c.total} (${c.count})`)
+          .join(', ')
+      : 'None';
+    const digestRecentTx = Array.isArray((quickLedgerSummary as any).sampleTransactions)
+      ? (quickLedgerSummary as any).sampleTransactions
+          .slice(0, 8)
+          .map((t: any) => `${t.date} | ${t.merchant} | ${currencySym}${t.amount} | ${t.category}`)
+          .join('; ')
+      : 'None';
+
     const contextSummaryHeader =
-      `[Workspace Financial Snapshot] Currency: ${currencySym} | Transactions: ${workingTx.length} | ` +
-      `Invoices: ${workingInvoices.length} | Portfolio Value: ${Number(stockPortfolio?.totalValue) || 0} | ` +
-      `Watchlist: ${watchlist.join(', ') || 'None'}\n\n`;
+      `[Workspace Financial Digest]\n` +
+      `Currency: ${currencySym} | Spend: ${currencySym}${(quickLedgerSummary as any).totalOutflow || 0} | ` +
+      `Inflow: ${currencySym}${(quickLedgerSummary as any).totalInflow || 0} | Net: ${currencySym}${(quickLedgerSummary as any).netCashflow || 0} | ` +
+      `Recurring: ${currencySym}${(quickLedgerSummary as any).recurringSpend || 0}\n` +
+      `Top Categories: ${digestCats || 'None'}\n` +
+      `Invoices (${workingInvoices.length}): Unpaid=${workingInvoices.filter((i) => i.paymentStatus !== 'paid').length}, Paid=${workingInvoices.filter((i) => i.paymentStatus === 'paid').length}\n` +
+      `Portfolio: Value=${currencySym}${(quickRatioSummary as any).stockPortfolio?.totalValue || 0}, Gain=${currencySym}${(quickRatioSummary as any).stockPortfolio?.unrealizedGain || 0} (${(quickRatioSummary as any).stockPortfolio?.unrealizedReturnPercent || 0}%), Watchlist=[${watchlist.join(', ') || 'None'}]\n` +
+      `Recent Tx: ${digestRecentTx || 'None'}\n\n`;
 
     const userParts: any[] = [];
     if (attachment && attachment.data) {
-      userParts.push({
-        inlineData: {
-          mimeType: attachment.mimeType || 'image/jpeg',
-          data: attachment.data,
-        },
-      });
+      const mimeLower = String(attachment.mimeType || '').toLowerCase();
+      const nameLower = String(attachment.name || '').toLowerCase();
+      const isPlainTextDoc =
+        mimeLower.startsWith('text/') ||
+        mimeLower.includes('csv') ||
+        mimeLower.includes('json') ||
+        /\.(csv|txt|tsv|json)$/i.test(nameLower);
+      if (isPlainTextDoc) {
+        try {
+          const decodedText = Buffer.from(String(attachment.data), 'base64').toString('utf8').slice(0, 28000);
+          userParts.push({
+            text: `[Attached Data File: ${attachment.name || 'document.csv'}]\n${decodedText}\n`,
+          });
+        } catch {
+          userParts.push({
+            inlineData: {
+              mimeType: 'text/plain',
+              data: attachment.data,
+            },
+          });
+        }
+      } else {
+        userParts.push({
+          inlineData: {
+            mimeType: attachment.mimeType || 'image/jpeg',
+            data: attachment.data,
+          },
+        });
+      }
     }
     userParts.push({
       text: `${contextSummaryHeader}${
-        prompt || (attachment ? 'Analyze this uploaded financial document and apply structured ledger insights.' : 'Provide a financial overview of my workspace.')
+        prompt || (attachment ? 'Analyze this uploaded financial document, extract key line items, and prepare charts/CSV/PDF deliverables.' : 'Provide a financial overview of my workspace.')
       }`,
     });
+
+    if (contents.length > 0 && contents[contents.length - 1].role === 'user') {
+      contents.push({ role: 'model', parts: [{ text: 'Understood. Continuing financial review.' }] });
+    }
     contents.push({ role: 'user', parts: userParts });
 
-    const tools: any[] = [{ functionDeclarations: FINANCIAL_AGENT_TOOLS }];
-    if (wantsWebLookup) {
-      tools.unshift({ googleSearch: {} });
-    }
+    const useWebSearch = Boolean(wantsWebLookup && mode !== 'ocr' && !attachment?.data);
 
-    const config: any = {
-      systemInstruction,
-      tools,
-      ...(wantsWebLookup ? { toolConfig: { includeServerSideToolInvocations: true } } : {}),
+    const callAgentModel = async (
+      allowWeb: boolean,
+      allowFunctions: boolean,
+      thinkingLevel: ThinkingLevel = ThinkingLevel.LOW,
+      timeoutMs = 15000,
+      modelName = 'gemini-4-hydrogen'
+    ) => {
+      const activeTools: any[] = [];
+      if (allowWeb) activeTools.push({ googleSearch: {} });
+      if (allowFunctions) activeTools.push({ functionDeclarations: FINANCIAL_AGENT_TOOLS });
+
+      const effectiveThinking =
+        modelName === 'gemini-3.1-flash-lite' ? ThinkingLevel.MINIMAL : thinkingLevel;
+
+      const config: any = {
+        systemInstruction,
+        thinkingConfig: { thinkingLevel: effectiveThinking },
+        abortSignal: AbortSignal.timeout(timeoutMs),
+      };
+      if (activeTools.length > 0) {
+        config.tools = activeTools;
+      }
+      if (allowWeb && allowFunctions) {
+        config.toolConfig = { includeServerSideToolInvocations: true };
+      }
+
+      return ai.models.generateContent({
+        model: modelName,
+        contents,
+        config,
+      });
     };
 
-    let response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
-      contents,
-      config,
-    });
+    let activeAllowWeb = useWebSearch;
+    let activeAllowFunctions = wantsFunctions && !useWebSearch;
+    let activeModel =
+      Date.now() < hydrogenSlowUntil || Date.now() < hydrogenCooldownUntil
+        ? 'gemini-3.1-flash-lite'
+        : 'gemini-4-hydrogen';
+    const initialThinking = activeAllowFunctions ? ThinkingLevel.MEDIUM : ThinkingLevel.LOW;
+    let response: any;
+    try {
+      response = await callAgentModel(
+        activeAllowWeb,
+        activeAllowFunctions,
+        initialThinking,
+        activeModel === 'gemini-4-hydrogen' ? 14000 : 18000,
+        activeModel
+      );
+    } catch (firstErr: any) {
+      if ((isQuotaError(firstErr) || isDeadlineOrTimeoutError(firstErr)) && activeModel === 'gemini-4-hydrogen') {
+        markHydrogenUnavailable(firstErr);
+        activeModel = 'gemini-3.1-flash-lite';
+        console.warn('[API /api/gemini/agent] Failing over to gemini-3.1-flash-lite:', firstErr?.message || firstErr);
+        try {
+          response = await callAgentModel(
+            activeAllowWeb,
+            activeAllowFunctions,
+            ThinkingLevel.MINIMAL,
+            18000,
+            'gemini-3.1-flash-lite'
+          );
+        } catch (liteErr: any) {
+          if (isQuotaError(liteErr)) throw liteErr;
+          activeAllowWeb = false;
+          activeAllowFunctions = false;
+          response = await callAgentModel(false, false, ThinkingLevel.MINIMAL, 15000, 'gemini-3.1-flash-lite');
+        }
+      } else if (isQuotaError(firstErr)) {
+        throw firstErr;
+      } else {
+        activeAllowWeb = false;
+        activeAllowFunctions = false;
+        response = await callAgentModel(false, false, ThinkingLevel.MINIMAL, 15000, 'gemini-3.1-flash-lite');
+      }
+    }
 
-    // Multi-turn autonomous function-calling execution loop (up to 5 rounds)
+    // Multi-turn autonomous function-calling execution loop (capped at 4 steps & 28s wall clock)
     let step = 0;
-    while (response.functionCalls && response.functionCalls.length > 0 && step < 5) {
+    while (
+      activeAllowFunctions &&
+      response?.functionCalls &&
+      response.functionCalls.length > 0 &&
+      step < 4 &&
+      Date.now() - startedAt < 28000
+    ) {
       step += 1;
       const candidateContent = response.candidates?.[0]?.content;
       if (candidateContent) {
@@ -3699,19 +4954,202 @@ app.post('/api/gemini/agent', async (req, res) => {
       });
 
       contents.push({ role: 'user', parts: fnResponseParts });
-
-      response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents,
-        config,
-      });
+      try {
+        response = await callAgentModel(activeAllowWeb, step < 3, ThinkingLevel.LOW, 14000, activeModel);
+      } catch (stepErr: any) {
+        if ((isQuotaError(stepErr) || isDeadlineOrTimeoutError(stepErr)) && activeModel === 'gemini-4-hydrogen') {
+          markHydrogenUnavailable(stepErr);
+          activeModel = 'gemini-3.1-flash-lite';
+          try {
+            response = await callAgentModel(activeAllowWeb, step < 3, ThinkingLevel.MINIMAL, 15000, 'gemini-3.1-flash-lite');
+            continue;
+          } catch (liteStepErr: any) {
+            if (isQuotaError(liteStepErr)) throw liteStepErr;
+            break;
+          }
+        }
+        if (isQuotaError(stepErr)) throw stepErr;
+        break;
+      }
     }
 
     const responseText =
-      response.text?.trim() ||
-      'I have completed your financial analysis and updated the requested records.';
+      response?.text?.trim() ||
+      'I have completed your financial analysis and prepared the requested deliverables.';
 
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    // Deterministic safeguard: if user requested chart/CSV/PDF artifacts in Agent Mode and any wasn't emitted via tool calls, synthesize from markdown table or workspace ledger
+    const wantsChartArtifact = /\b(visuali[sz]e|chart|graph|dashboard)\b/i.test(promptLower);
+    const wantsCsvArtifact = /\b(csv|spreadsheet|excel|dashboard file)\b/i.test(promptLower);
+    const wantsPdfArtifact = /\b(pdf|report)\b/i.test(promptLower);
+
+    if ((mode === 'agent' || isArtifactOrAnalysisIntent) && (wantsChartArtifact || wantsCsvArtifact || wantsPdfArtifact)) {
+      // Extract markdown table rows if Gemini produced a table in its response text
+      const extractedTable: { headers: string[]; rows: string[][] } | null = (() => {
+        const lines = responseText.split('\n').map((l) => l.trim());
+        for (let i = 0; i < lines.length - 2; i++) {
+          if (lines[i].startsWith('|') && lines[i + 1].startsWith('|') && /^\|[\s:|-]+\|$/.test(lines[i + 1])) {
+            const parseRow = (line: string) =>
+              line
+                .replace(/^\|/, '')
+                .replace(/\|$/, '')
+                .split('|')
+                .map((c) => c.trim());
+            const headers = parseRow(lines[i]);
+            const rows: string[][] = [];
+            for (let j = i + 2; j < lines.length && lines[j].startsWith('|'); j++) {
+              const cells = parseRow(lines[j]);
+              if (cells.length > 0) rows.push(cells);
+            }
+            if (headers.length >= 2 && rows.length > 0) {
+              return { headers, rows };
+            }
+          }
+        }
+        return null;
+      })();
+
+      const fallbackCats = Array.isArray((quickLedgerSummary as any).categoryBreakdown)
+        ? (quickLedgerSummary as any).categoryBreakdown.slice(0, 8)
+        : [];
+
+      if (wantsChartArtifact && collectedCharts.length === 0) {
+        if (extractedTable && extractedTable.rows.length > 0) {
+          const numColIdx = extractedTable.headers.findIndex((_, idx) =>
+            idx > 0 && extractedTable.rows.some((r) => /[\d]/.test(r[idx] || ''))
+          );
+          if (numColIdx > 0) {
+            const chartPoints = extractedTable.rows
+              .slice(0, 12)
+              .map((r) => {
+                const rawNum = Number(String(r[numColIdx] || '').replace(/[^0-9.-]/g, ''));
+                return {
+                  label: String(r[0] || 'Item').slice(0, 26),
+                  value: Number.isFinite(rawNum) ? rawNum : 0,
+                };
+              })
+              .filter((d) => d.value > 0);
+            if (chartPoints.length > 0) {
+              collectedCharts.push({
+                id: `chart_${Date.now()}_${collectedCharts.length + 1}`,
+                title: attachment?.name ? `${attachment.name} Breakdown` : 'Extracted Financial Visualization',
+                subtitle: 'Generated automatically from structured analysis',
+                chartType: 'bar',
+                currencySymbol: currencySym,
+                data: chartPoints,
+              });
+              activatedToolsSet.add('generate_visual_dashboard');
+            }
+          }
+        }
+        if (collectedCharts.length === 0 && fallbackCats.length > 0) {
+          collectedCharts.push({
+            id: `chart_${Date.now()}_${collectedCharts.length + 1}`,
+            title: 'Spending Allocation by Category',
+            subtitle: 'Live workspace ledger visualization',
+            chartType: 'bar',
+            currencySymbol: currencySym,
+            data: fallbackCats.map((c: any) => ({ label: String(c.category || 'Category'), value: Number(c.total) || 0 })),
+          });
+          activatedToolsSet.add('generate_visual_dashboard');
+        }
+      }
+
+      if (wantsCsvArtifact && !collectedCsvExport) {
+        const csvHeaders = extractedTable?.headers || ['Date', 'Merchant', 'Category', 'Method', 'Amount'];
+        const csvRows =
+          extractedTable?.rows ||
+          workingTx.slice(0, 60).map((t) => [
+            String(t.date || ''),
+            String(t.merchant || ''),
+            String(t.category || 'Other'),
+            String(t.paymentMethod || ''),
+            String(t.amount || 0),
+          ]);
+        if (csvRows.length > 0) {
+          const escapeCsv = (val: string) =>
+            /[",\n\r]/.test(val) ? `"${val.replace(/"/g, '""')}"` : val;
+          const csvContent = [
+            csvHeaders.map(escapeCsv).join(','),
+            ...csvRows.map((r) => r.map(escapeCsv).join(',')),
+          ].join('\n');
+          collectedCsvExport = {
+            filename: 'liddy-financial-dashboard.csv',
+            title: attachment?.name ? `${attachment.name} CSV Dashboard` : 'Liddy Financial CSV Dashboard',
+            headers: csvHeaders,
+            rows: csvRows,
+            rowCount: csvRows.length,
+            csvContent,
+          };
+          activatedToolsSet.add('export_csv_dashboard');
+        }
+      }
+
+      if (wantsPdfArtifact && !collectedPdfReport) {
+        const summaryLines = responseText
+          .split('\n')
+          .map((l) => l.replace(/^[-*•#]+\s*/, '').trim())
+          .filter((l) => l.length > 8 && !l.startsWith('|') && !l.startsWith('```'))
+          .slice(0, 6);
+        const totalOut = Number((quickLedgerSummary as any).totalOutflow || 0);
+        const totalIn = Number((quickLedgerSummary as any).totalInflow || 0);
+        const fallbackTable =
+          extractedTable ||
+          (fallbackCats.length > 0
+            ? {
+                headers: ['Category', 'Count', 'Total'],
+                rows: fallbackCats.map((c: any) => [
+                  String(c.category),
+                  String(c.count),
+                  `${currencySym}${Number(c.total || 0).toLocaleString()}`,
+                ]),
+              }
+            : undefined);
+        const pdfSections: Array<{
+          heading: string;
+          bullets?: string[];
+          table?: { headers: string[]; rows: Array<Array<string | number>> };
+        }> = [
+          {
+            heading: 'Key Findings & Executive Summary',
+            bullets: summaryLines.length > 0 ? summaryLines : ['Structured analysis completed cleanly.'],
+          },
+        ];
+        if (fallbackTable && fallbackTable.headers.length > 0 && fallbackTable.rows.length > 0) {
+          pdfSections.push({
+            heading: 'Category & Line-Item Breakdown',
+            bullets: [],
+            table: fallbackTable,
+          });
+        }
+        collectedPdfReport = {
+          filename: 'liddy-executive-report.pdf',
+          title: attachment?.name ? `Analysis Report: ${attachment.name}` : 'Liddy Executive Financial Report',
+          subtitle: 'Compiled automatically by Liddy AI CFO Agent',
+          generatedAt: new Date().toISOString().split('T')[0],
+          currencySymbol: currencySym,
+          kpis: [
+            { label: 'Total Spend', value: `${currencySym}${totalOut.toLocaleString()}` },
+            { label: 'Total Inflow', value: `${currencySym}${totalIn.toLocaleString()}` },
+            { label: 'Net Cashflow', value: `${currencySym}${(totalIn - totalOut).toLocaleString()}` },
+          ],
+          sections: pdfSections,
+        };
+        activatedToolsSet.add('export_pdf_report');
+      }
+    }
+
+    // Annotate any active user skills whose triggers matched the current prompt
+    for (const sk of safeActiveSkills) {
+      const trigList = String(sk?.triggers || '')
+        .split(',')
+        .map((t: string) => t.trim().toLowerCase())
+        .filter((t: string) => t.length >= 2);
+      if (trigList.some((tr: string) => promptLower.includes(tr))) {
+        activatedToolsSet.add(`skill:${String(sk?.slug || sk?.name || 'custom').slice(0, 32)}`);
+      }
+    }
+
+    const groundingChunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks;
     const groundingUrls = groundingChunks
       ?.map((c: any) => ({
         title: c.web?.title || 'Financial Source',
@@ -3736,40 +5174,51 @@ app.post('/api/gemini/agent', async (req, res) => {
       groundingUrls: groundingUrls || [],
       activatedTools: Array.from(activatedToolsSet),
       ledgerOperations,
+      charts: collectedCharts,
+      csvExport: collectedCsvExport,
+      pdfReport: collectedPdfReport,
     });
   } catch (err: any) {
     console.warn('[API /api/gemini/agent] Error:', err?.message || err);
     markQuotaExhausted(err);
-    res.status(isQuotaError(err) ? 429 : 502).json({
-      error: "Sorry, I wasn't able to proceed with that request right now. Please try again in a moment.",
-    });
+    const status = isQuotaError(err) ? 429 : isDeadlineOrTimeoutError(err) ? 504 : 502;
+    const message =
+      status === 429
+        ? 'AI rate limit reached across both primary and fallback models. Please wait a moment and try again.'
+        : status === 504
+        ? 'The AI response took too long to complete. Please try a shorter prompt or retry in a moment.'
+        : FRIENDLY_ERROR;
+    res.status(status).json({ error: message });
   }
 });
 
 // ==========================================
-// 2. RECEIPT & BILL SCANNER (VISION)
+// 2. RECEIPT & HANDWRITTEN BILL OCR TO DIGITAL INVOICE
 // ==========================================
 app.post('/api/gemini/receipt', async (req, res) => {
   if (shouldSkipGeminiCall()) {
-    return res.status(503).json({ error: 'Receipt OCR service temporarily unavailable or on quota cooldown.' });
+    return res.status(503).json({ error: 'Receipt OCR service temporarily unavailable. Please try again shortly.' });
   }
 
   try {
-    const { base64Data } = req.body;
+    const { base64Data, mimeType } = req.body || {};
     if (!base64Data) {
-      return res.status(400).json({ error: 'Missing base64Data' });
+      return res.status(400).json({ error: 'Missing receipt or bill image data.' });
     }
 
     const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const response = await generateWithHydrogenFailover(ai, {
       contents: {
         parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
-          { text: "Analyze this receipt. Return a JSON object with 'merchant' (string), 'amount' (number), 'date' (YYYY-MM-DD), and 'category' (string). Only return raw JSON without markdown formatting." }
-        ]
+          { inlineData: { mimeType: mimeType || 'image/jpeg', data: base64Data } },
+          {
+            text:
+              'You are an expert OCR engine for printed receipts and handwritten paper bills. Carefully read every line item, merchant header, address/phone, invoice/bill number, date, currency symbol or code, quantities, unit prices, taxes/GST, subtotal, and grand total. Return clean raw JSON only.',
+          },
+        ],
       },
       config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
@@ -3777,17 +5226,77 @@ app.post('/api/gemini/receipt', async (req, res) => {
             merchant: { type: Type.STRING },
             amount: { type: Type.NUMBER },
             date: { type: Type.STRING },
-            category: { type: Type.STRING }
+            category: { type: Type.STRING },
+            invoiceNumber: { type: Type.STRING },
+            senderDetails: { type: Type.STRING },
+            currency: { type: Type.STRING },
+            subtotal: { type: Type.NUMBER },
+            taxTotal: { type: Type.NUMBER },
+            notes: { type: Type.STRING },
+            isHandwritten: { type: Type.BOOLEAN },
+            items: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  description: { type: Type.STRING },
+                  quantity: { type: Type.NUMBER },
+                  unitPrice: { type: Type.NUMBER },
+                  taxPercent: { type: Type.NUMBER },
+                  total: { type: Type.NUMBER },
+                },
+                required: ['description', 'quantity', 'unitPrice', 'total'],
+              },
+            },
           },
-          required: ['merchant', 'amount', 'category']
-        }
-      }
+          required: ['merchant', 'amount', 'category'],
+        },
+      },
     });
 
     const raw = response.text?.trim() || '';
     if (raw) {
       const clean = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```$/i, '').trim();
-      return res.json(JSON.parse(clean));
+      const parsed = JSON.parse(clean);
+      const amountNum = Number(parsed?.amount) || 0;
+      const items =
+        Array.isArray(parsed?.items) && parsed.items.length > 0
+          ? parsed.items.map((it: any) => {
+              const qty = Math.max(1, Number(it?.quantity) || 1);
+              const total = Number(it?.total) || Number(it?.unitPrice) * qty || 0;
+              const unitPrice = Number(it?.unitPrice) || (qty > 0 ? total / qty : total);
+              return {
+                description: String(it?.description || 'Item').slice(0, 140),
+                quantity: qty,
+                unitPrice: Math.round(unitPrice * 100) / 100,
+                taxPercent: Math.max(0, Number(it?.taxPercent) || 0),
+                total: Math.round(total * 100) / 100,
+              };
+            })
+          : [
+              {
+                description: `${String(parsed?.merchant || 'Scanned Bill').slice(0, 80)} (${String(parsed?.category || 'General')})`,
+                quantity: 1,
+                unitPrice: amountNum,
+                taxPercent: 0,
+                total: amountNum,
+              },
+            ];
+
+      return res.json({
+        merchant: String(parsed?.merchant || 'Scanned Merchant').slice(0, 160),
+        amount: amountNum,
+        date: String(parsed?.date || new Date().toISOString().split('T')[0]).slice(0, 10),
+        category: String(parsed?.category || 'Shopping').slice(0, 80),
+        invoiceNumber: parsed?.invoiceNumber ? String(parsed.invoiceNumber).slice(0, 64) : undefined,
+        senderDetails: parsed?.senderDetails ? String(parsed.senderDetails).slice(0, 300) : undefined,
+        currency: parsed?.currency ? String(parsed.currency).slice(0, 8) : undefined,
+        subtotal: Number(parsed?.subtotal) || Math.max(0, amountNum - (Number(parsed?.taxTotal) || 0)),
+        taxTotal: Math.max(0, Number(parsed?.taxTotal) || 0),
+        notes: parsed?.notes ? String(parsed.notes).slice(0, 400) : undefined,
+        isHandwritten: Boolean(parsed?.isHandwritten),
+        items,
+      });
     }
     res.status(422).json({ error: 'Could not extract receipt fields from this image.' });
   } catch (err: any) {
@@ -4346,8 +5855,7 @@ async function runFastMatchFallback(rawPrompt: string, style: VisualStylePresetS
   if (Boolean(process.env.API_KEY || process.env.GEMINI_API_KEY) && !shouldSkipGeminiCall()) {
     try {
       const ai = getAiClient();
-      const svgResp = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
+      const svgResp = await generateWithHydrogenFailover(ai, {
         contents: `Create a detailed 1280x720 SVG illustration directly depicting: "${rawPrompt}".
 Rules:
 - Return ONLY raw valid <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">...</svg> code.
@@ -4802,15 +6310,92 @@ app.post('/api/gemini/generate-image', async (req, res) => {
 });
 
 // ==========================================
-// 4. ENHANCE VISUAL PROMPT
+// 3B. FINANCIAL GOAL IMAGE EDITOR (AI PROMPT EDIT)
+// ==========================================
+app.post('/api/gemini/edit-image', async (req, res) => {
+  const { imageDataUrl, instruction, aspectRatio } = req.body || {};
+  const cleanInstruction = String(instruction || '').trim().slice(0, 600);
+  if (!imageDataUrl || typeof imageDataUrl !== 'string') {
+    return res.status(400).json({ error: 'Missing source image to edit.' });
+  }
+  if (!cleanInstruction) {
+    return res.status(400).json({ error: 'Enter an AI edit instruction first.' });
+  }
+
+  const normRatio = normalizeAspectRatio(aspectRatio);
+  let resolvedDataUrl = imageDataUrl.trim();
+  if (resolvedDataUrl.startsWith('http://') || resolvedDataUrl.startsWith('https://')) {
+    const converted = await fetchImageUrlAsDataUrl(resolvedDataUrl, 10000);
+    if (converted) resolvedDataUrl = converted;
+  }
+
+  const dataMatch = resolvedDataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  const hasKey = Boolean(process.env.API_KEY || process.env.GEMINI_API_KEY);
+
+  if (dataMatch && !dataMatch[1].includes('svg') && hasKey && !shouldSkipGeminiCall()) {
+    try {
+      const mimeType = dataMatch[1];
+      const base64Data = dataMatch[2];
+      const ai = getAiClient();
+      const response = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-lite-image',
+        contents: {
+          parts: [
+            { inlineData: { data: base64Data, mimeType } },
+            {
+              text: `Edit this financial goal visual per the user instruction while maintaining realistic clarity, composition, and aspirational personal wealth quality: ${cleanInstruction}`,
+            },
+          ],
+        },
+        config: {
+          imageConfig: { aspectRatio: ASPECT_RATIO_DIMS[normRatio].geminiRatio },
+        },
+      });
+
+      for (const part of response.candidates?.[0]?.content?.parts || []) {
+        if (part.inlineData?.data) {
+          const outMime = part.inlineData.mimeType || 'image/png';
+          return res.json({
+            imageUrl: `data:${outMime};base64,${part.inlineData.data}`,
+            format: 'raster',
+            mode: 'ai-raster',
+            provider: 'Gemini Image Editor',
+            statusMessage: 'Edited financial goal visual with AI.',
+          });
+        }
+      }
+    } catch (err: any) {
+      markQuotaExhausted(err);
+      recordFailure('warning', 'AI', 'POST /api/gemini/edit-image', Number(err?.status || 502), String(err?.message || err));
+    }
+  }
+
+  // Fallback to admin-configured Cloudflare / HF FLUX regeneration when Gemini image key lacks quota
+  const fallbackPrompt = `Financial goal milestone scene, ${cleanInstruction}, warm architectural natural light, photorealistic editorial quality`;
+  const cfRes = await generateViaCloudflareFlux(fallbackPrompt, normRatio);
+  if (cfRes) return res.json(cfRes);
+
+  const hfRes = await generateViaHuggingFaceFlux(fallbackPrompt, normRatio);
+  if (hfRes) return res.json(hfRes);
+
+  const hordeRes = await generateViaAiHorde(fallbackPrompt, 'photorealistic', normRatio, undefined, 25);
+  if (hordeRes) return res.json(hordeRes);
+
+  return res.status(503).json({
+    error: 'AI prompt image editing requires an active Gemini Image quota or FLUX engine. Use Manual Canvas Controls to add goal titles, filters, crop & frames instantly.',
+  });
+});
+
+// ==========================================
+// 4. ENHANCE FINANCIAL VISUAL PROMPT
 // ==========================================
 const STYLE_ENHANCEMENTS: Record<VisualStylePresetServer, string> = {
-  auto: 'bathed in natural balanced lighting with crisp composition and lifelike texture detail',
-  photorealistic: 'shot on a 35mm lens in warm natural golden light with shallow depth of field and true-to-life textures',
-  cinematic: 'framed as an atmospheric wide cinema still with dramatic rim lighting and rich film color grading',
-  editorial_3d: 'presented as a minimalist matte architectural 3D studio scene with soft rim lighting and clean tactile geometry',
-  illustration: 'illustrated in refined editorial gouache and crisp ink linework with a harmonious curated palette',
-  watercolor: 'painted in expressive fine art watercolor washes on textured cotton paper with luminous highlights',
+  auto: 'framed as an aspirational personal financial goal milestone, bathed in natural balanced lighting with crisp composition',
+  photorealistic: 'shot on a 35mm lens capturing a real-world wealth milestone in warm natural golden light with true-to-life detail',
+  cinematic: 'framed as an atmospheric wide cinema still symbolizing financial freedom, dramatic rim lighting and rich color grading',
+  editorial_3d: 'presented as a minimalist matte architectural 3D studio financial milestone diorama with crisp tactile geometry',
+  illustration: 'illustrated in refined editorial gouache portraying a concrete financial savings milestone with curated palette',
+  watercolor: 'painted in expressive fine art watercolor washes celebrating a long-term wealth goal on textured cotton paper',
 };
 
 app.post('/api/gemini/enhance-prompt', async (req, res) => {
@@ -4823,9 +6408,9 @@ app.post('/api/gemini/enhance-prompt', async (req, res) => {
   if (!shouldSkipGeminiCall()) {
     try {
       const ai = getAiClient();
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: `Rewrite and enrich this user image idea into one vivid, specific 1-sentence visual prompt tailored to a "${STYLE_PRESET_MAP[style].label}" aesthetic. Strictly preserve the exact subject, setting, objects and style the user asked for without substituting unrelated topics: "${rawPrompt}". Return ONLY the improved prompt sentence.`,
+      const response = await generateWithHydrogenFailover(ai, {
+        contents: `Rewrite and enrich this financial goal, wealth milestone, or finance-focused concept into one vivid, specific 1-sentence visual prompt tailored to a "${STYLE_PRESET_MAP[style].label}" aesthetic. Ground the scene in tangible personal finance, wealth, home/retirement, business growth, or savings milestones while preserving the user's core subject: "${rawPrompt}". Return ONLY the improved prompt sentence.`,
+        config: { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
       });
 
       const out = response.text?.trim();
@@ -4835,7 +6420,7 @@ app.post('/api/gemini/enhance-prompt', async (req, res) => {
     }
   }
 
-  // Clean zero-key offline visual enrichment that preserves the user's exact subject
+  // Clean zero-key offline financial visual enrichment that preserves the user's exact subject
   const cleanSubject = rawPrompt.replace(/[.!?]+$/, '');
   const enriched = `${cleanSubject}, ${STYLE_ENHANCEMENTS[style]}`;
   res.json({ text: enriched });
@@ -4860,8 +6445,7 @@ app.post('/api/gemini/automation', async (req, res) => {
     };
 
     const taskPrompt = promptMap[taskType] || "Provide an in-depth financial advisory report.";
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const response = await generateWithHydrogenFailover(ai, {
       contents: `${taskPrompt}\nContext: ${financialContext || 'Standard portfolio records'}`,
       config: {
         tools: [{ googleSearch: {} }]
@@ -4935,8 +6519,7 @@ app.post('/api/gemini/voice-memo', async (req, res) => {
       market: 'Focus on live equity markets, stock portfolio health, interest rates, and global financial news.',
     };
 
-    const analysis = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const analysis = await generateWithHydrogenFailover(ai, {
       contents: {
         parts: [
           {
@@ -5003,8 +6586,7 @@ app.get('/api/gemini/market-news', async (_req, res) => {
       const currentDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const livePrompt = `Retrieve 6 breaking, factual global financial news stories for today (${currentDate}). Return ONLY raw JSON with key "news": array of objects having title, source, summary, category, timeAgo, url, impact ("HIGH"|"MEDIUM"|"MACRO"), sentiment ("BULLISH"|"BEARISH"|"NEUTRAL").`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
+      const response = await generateWithHydrogenFailover(ai, {
         contents: livePrompt,
         config: { tools: [{ googleSearch: {} }] },
       });
@@ -5045,8 +6627,7 @@ app.post('/api/gemini/search-news', async (req, res) => {
 
     if (!shouldSkipGeminiCall()) {
       const ai = getAiClient();
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
+      const response = await generateWithHydrogenFailover(ai, {
         contents: `Find 4 latest authentic financial news articles about: "${query}". Return ONLY raw JSON with key 'news' (array of objects with title, source, summary, url, category, timeAgo, sentiment). Do not output markdown code blocks.`,
         config: { tools: [{ googleSearch: {} }] },
       });
@@ -5089,8 +6670,7 @@ app.post('/api/gemini/search-ticker', async (req, res) => {
 
     if (!shouldSkipGeminiCall()) {
       const ai = getAiClient();
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
+      const response = await generateWithHydrogenFailover(ai, {
         contents: `Look up verified live financial market data for public company or ticker symbol: "${query}".
 Return a single JSON object with fields: ticker, name, exchange ("NYSE / NASDAQ" | "NSE / BSE" | "LSE / Euronext" | "TSE / HKEX"), sector, marketCap, price, change, isPositive (boolean), volume, peRatio, week52High, week52Low, headquarters, ceo, description, investorUrl, dividendYield.
 Only return raw JSON without markdown code blocks.`,
@@ -5153,8 +6733,7 @@ For items, accurately calculate total = (quantity * unitPrice) * (1 - (discountP
 Also calculate grand totals: subtotal, taxTotal, discountTotal, grandTotal.
 Return ONLY clean JSON without markdown code fences.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const response = await generateWithHydrogenFailover(ai, {
       contents: [
         { text: systemPrompt },
         { text: `User request to generate bill/invoice:\n"${prompt}"` }
@@ -5229,8 +6808,7 @@ Analyze the provided draft invoice, fix any grammar, enrich item descriptions to
 Additional user instruction: ${instructions || 'Polish line items, ensure proper categorization, and make the billing terms crisp and clear.'}
 Return the updated invoice object as raw JSON.`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-4-hydrogen',
+    const response = await generateWithHydrogenFailover(ai, {
       contents: [
         { text: systemPrompt },
         { text: `Current Invoice JSON:\n${JSON.stringify(currentInvoice, null, 2)}` }
@@ -5463,6 +7041,10 @@ interface ServerCollabParticipant {
   role: string;
   color: string;
   joinedAt: string;
+  guestKey: string;
+  userId?: string;
+  email?: string;
+  isHost: boolean;
   micOn: boolean;
   camOn: boolean;
   screenOn: boolean;
@@ -5470,13 +7052,35 @@ interface ServerCollabParticipant {
   ws: WebSocket;
 }
 
+interface ServerCollabWaitingPeer {
+  clientId: string;
+  name: string;
+  role: string;
+  color: string;
+  guestKey: string;
+  userId?: string;
+  email?: string;
+  requestedAt: string;
+  ws: WebSocket;
+}
+
+interface ServerCollabDeniedEntry {
+  guestKey: string;
+  name: string;
+  deniedAt: string;
+}
+
 interface ServerCollabRoomState {
   roomCode: string;
+  hostClientId: string | null;
+  hostKey: string | null;
   nodes: any[];
   slides: any[];
   meetingNotes: any[];
   chatMessages: any[];
   participants: Map<string, ServerCollabParticipant>;
+  waitingPeers: Map<string, ServerCollabWaitingPeer>;
+  deniedKeys: Map<string, ServerCollabDeniedEntry>;
 }
 
 const collabWss = new WebSocketServer({ noServer: true });
@@ -5494,14 +7098,25 @@ function broadcastToRoom(room: ServerCollabRoomState, messageObj: any, excludeCl
   });
 }
 
+function sendToHost(room: ServerCollabRoomState, messageObj: any) {
+  if (!room.hostClientId) return;
+  const host = room.participants.get(room.hostClientId);
+  if (host && host.ws.readyState === WebSocket.OPEN) {
+    try {
+      host.ws.send(JSON.stringify(messageObj));
+    } catch {}
+  }
+}
+
 function serializePresence(room: ServerCollabRoomState) {
-  return Array.from(room.participants.values()).map(({ clientId, name, role, color, joinedAt, micOn, camOn, screenOn, handRaised }) => ({
+  return Array.from(room.participants.values()).map(({ clientId, name, role, color, joinedAt, isHost, micOn, camOn, screenOn, handRaised }) => ({
     clientId,
     peerId: clientId,
     name,
     role,
     color,
     joinedAt,
+    isHost,
     micOn,
     camOn,
     screenOn,
@@ -5509,12 +7124,121 @@ function serializePresence(room: ServerCollabRoomState) {
   }));
 }
 
+function serializeWaitingPeers(room: ServerCollabRoomState) {
+  return Array.from(room.waitingPeers.values()).map(({ clientId, name, role, requestedAt }) => ({
+    clientId,
+    name,
+    role,
+    requestedAt,
+  }));
+}
+
+function serializeDeniedList(room: ServerCollabRoomState) {
+  return Array.from(room.deniedKeys.values());
+}
+
+function terminateBlockedUserInRooms(userId?: string, email?: string, mode: 'blocked' | 'revoked' = 'blocked') {
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const payload = JSON.stringify({
+    type: mode === 'blocked' ? 'account_blocked' : 'account_revoked',
+    message:
+      mode === 'blocked'
+        ? 'Your account has been blocked by the platform administrator.'
+        : 'Your active session was revoked by the platform administrator.',
+  });
+
+  activeCollabRooms.forEach((room) => {
+    room.participants.forEach((p, cid) => {
+      const matchesUid = Boolean(userId && p.userId === userId);
+      const matchesEmail = Boolean(cleanEmail && p.email?.toLowerCase() === cleanEmail);
+      if (matchesUid || matchesEmail) {
+        try {
+          if (p.ws.readyState === WebSocket.OPEN) {
+            p.ws.send(payload);
+            p.ws.close(1008, mode === 'blocked' ? 'Account blocked' : 'Session revoked');
+          }
+        } catch {}
+        room.participants.delete(cid);
+        if (room.hostClientId === cid) {
+          room.hostClientId = null;
+        }
+        broadcastToRoom(room, { type: 'peer_left', peerId: cid });
+        broadcastToRoom(room, { type: 'presence', participants: serializePresence(room) });
+      }
+    });
+
+    room.waitingPeers.forEach((w, cid) => {
+      const matchesUid = Boolean(userId && w.userId === userId);
+      const matchesEmail = Boolean(cleanEmail && w.email?.toLowerCase() === cleanEmail);
+      if (matchesUid || matchesEmail) {
+        try {
+          if (w.ws.readyState === WebSocket.OPEN) {
+            w.ws.send(payload);
+            w.ws.close(1008, mode === 'blocked' ? 'Account blocked' : 'Session revoked');
+          }
+        } catch {}
+        room.waitingPeers.delete(cid);
+        sendToHost(room, { type: 'waiting_requests', waitingRequests: serializeWaitingPeers(room) });
+      }
+    });
+  });
+}
+
+function promoteParticipant(
+  room: ServerCollabRoomState,
+  peer: ServerCollabParticipant
+) {
+  room.participants.set(peer.clientId, peer);
+  if (peer.ws.readyState === WebSocket.OPEN) {
+    peer.ws.send(
+      JSON.stringify({
+        type: 'room_state',
+        clientId: peer.clientId,
+        peerId: peer.clientId,
+        isHost: peer.isHost,
+        roomCode: room.roomCode,
+        nodes: room.nodes,
+        slides: room.slides,
+        meetingNotes: room.meetingNotes,
+        chatMessages: room.chatMessages,
+        participants: serializePresence(room),
+        waitingRequests: peer.isHost ? serializeWaitingPeers(room) : [],
+        deniedList: peer.isHost ? serializeDeniedList(room) : [],
+      })
+    );
+  }
+  broadcastToRoom(room, {
+    type: 'presence',
+    participants: serializePresence(room),
+  });
+}
+
 collabWss.on('connection', (clientWs: WebSocket, req?: http.IncomingMessage) => {
   const url = new URL(req?.url || '/api/collab-room', 'http://localhost');
-  const roomCode = (url.searchParams.get('room') || 'TEAM-101').toUpperCase().slice(0, 32);
-  const name = (url.searchParams.get('name') || 'Participant').slice(0, 40);
-  const role = (url.searchParams.get('role') || 'Member').slice(0, 32);
+  const roomCode = (url.searchParams.get('room') || 'TEAM-101').toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 32) || 'TEAM-101';
+  const name = (url.searchParams.get('name') || 'Participant').trim().slice(0, 40) || 'Participant';
+  const role = (url.searchParams.get('role') || 'Member').trim().slice(0, 32) || 'Member';
+  const requestedMode = (url.searchParams.get('mode') || 'knock').toLowerCase();
+  const rawGuestKey = (url.searchParams.get('guestKey') || '').trim().slice(0, 80);
+  const userId = (url.searchParams.get('uid') || '').trim().slice(0, 128) || undefined;
+  const email = (url.searchParams.get('email') || '').trim().toLowerCase().slice(0, 254) || undefined;
+
+  const accessRec = findUserAccessRecord(userId, email);
+  if (accessRec?.status === 'blocked' && email !== PLATFORM_OWNER_EMAIL) {
+    try {
+      clientWs.send(
+        JSON.stringify({
+          type: 'account_blocked',
+          message: 'Your account has been blocked from using Liddy by an administrator.',
+        })
+      );
+      clientWs.close(1008, 'Account blocked');
+    } catch {}
+    return;
+  }
+
   const clientId = `peer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+  const guestKey = userId ? `uid:${userId}` : rawGuestKey ? `guest:${rawGuestKey}` : `sess:${clientId}`;
   const palette = ['#4F46E5', '#10B981', '#0284C7', '#D97706', '#E11D48', '#7C3AED'];
   const color = palette[Math.floor(Math.random() * palette.length)];
 
@@ -5522,51 +7246,215 @@ collabWss.on('connection', (clientWs: WebSocket, req?: http.IncomingMessage) => 
   if (!room) {
     room = {
       roomCode,
+      hostClientId: null,
+      hostKey: null,
       nodes: [],
       slides: [],
       meetingNotes: [],
       chatMessages: [],
       participants: new Map(),
+      waitingPeers: new Map(),
+      deniedKeys: new Map(),
     };
     activeCollabRooms.set(roomCode, room);
   }
 
-  room.participants.set(clientId, {
-    clientId,
-    name,
-    role,
-    color,
-    joinedAt: new Date().toISOString(),
-    micOn: false,
-    camOn: false,
-    screenOn: false,
-    handRaised: false,
-    ws: clientWs,
-  });
-
-  if (clientWs.readyState === WebSocket.OPEN) {
-    clientWs.send(JSON.stringify({
-      type: 'room_state',
-      clientId,
-      peerId: clientId,
-      roomCode,
-      nodes: room.nodes,
-      slides: room.slides,
-      meetingNotes: room.meetingNotes,
-      chatMessages: room.chatMessages,
-      participants: serializePresence(room),
-    }));
+  // Enforce room-level deny/removal blocklist across reconnects
+  const altGuestKey = rawGuestKey ? `guest:${rawGuestKey}` : '';
+  const isDenied = room.deniedKeys.has(guestKey) || (altGuestKey && room.deniedKeys.has(altGuestKey));
+  if (isDenied && room.hostKey !== guestKey) {
+    try {
+      clientWs.send(
+        JSON.stringify({
+          type: 'join_denied',
+          roomCode,
+          message: 'The host denied or removed your access to this room. You cannot re-enter unless admitted by the host.',
+        })
+      );
+      clientWs.close(1008, 'Denied by host');
+    } catch {}
+    return;
   }
 
-  broadcastToRoom(room, {
-    type: 'presence',
-    participants: serializePresence(room),
-  });
+  const canClaimHost =
+    (requestedMode === 'host' && (!room.hostClientId || room.hostKey === guestKey)) ||
+    (room.hostKey === guestKey && !room.hostClientId);
+
+  if (canClaimHost) {
+    room.hostClientId = clientId;
+    room.hostKey = guestKey;
+    promoteParticipant(room, {
+      clientId,
+      name,
+      role: role || 'Host',
+      color,
+      joinedAt: new Date().toISOString(),
+      guestKey,
+      userId,
+      email,
+      isHost: true,
+      micOn: false,
+      camOn: false,
+      screenOn: false,
+      handRaised: false,
+      ws: clientWs,
+    });
+  } else {
+    // Enter waiting room and knock for host approval
+    room.waitingPeers.set(clientId, {
+      clientId,
+      name,
+      role,
+      color,
+      guestKey,
+      userId,
+      email,
+      requestedAt: new Date().toISOString(),
+      ws: clientWs,
+    });
+
+    if (clientWs.readyState === WebSocket.OPEN) {
+      clientWs.send(
+        JSON.stringify({
+          type: 'waiting_approval',
+          clientId,
+          roomCode,
+          hostPresent: Boolean(room.hostClientId),
+          message: room.hostClientId
+            ? 'Asking the host for permission to join...'
+            : 'Waiting for the host to open this room and admit you...',
+        })
+      );
+    }
+
+    sendToHost(room, {
+      type: 'waiting_requests',
+      waitingRequests: serializeWaitingPeers(room),
+    });
+  }
 
   clientWs.on('message', (raw: any) => {
     try {
       const msg = JSON.parse(raw.toString());
       if (!room) return;
+
+      // Host-only admission and moderation commands
+      if (clientId === room.hostClientId && room.participants.has(clientId)) {
+        if (msg.type === 'host_admit' && msg.targetClientId) {
+          const targetId = String(msg.targetClientId);
+          const waiting = room.waitingPeers.get(targetId);
+          if (waiting) {
+            room.waitingPeers.delete(targetId);
+            room.deniedKeys.delete(waiting.guestKey);
+            if (waiting.ws.readyState === WebSocket.OPEN) {
+              waiting.ws.send(JSON.stringify({ type: 'admitted', roomCode }));
+            }
+            promoteParticipant(room, {
+              clientId: waiting.clientId,
+              name: waiting.name,
+              role: waiting.role,
+              color: waiting.color,
+              joinedAt: new Date().toISOString(),
+              guestKey: waiting.guestKey,
+              userId: waiting.userId,
+              email: waiting.email,
+              isHost: false,
+              micOn: false,
+              camOn: false,
+              screenOn: false,
+              handRaised: false,
+              ws: waiting.ws,
+            });
+            sendToHost(room, {
+              type: 'waiting_requests',
+              waitingRequests: serializeWaitingPeers(room),
+            });
+          }
+          return;
+        }
+
+        if (msg.type === 'host_deny' && msg.targetClientId) {
+          const targetId = String(msg.targetClientId);
+          const waiting = room.waitingPeers.get(targetId);
+          if (waiting) {
+            room.waitingPeers.delete(targetId);
+            const deniedAt = new Date().toISOString();
+            room.deniedKeys.set(waiting.guestKey, {
+              guestKey: waiting.guestKey,
+              name: waiting.name,
+              deniedAt,
+            });
+            if (waiting.ws.readyState === WebSocket.OPEN) {
+              try {
+                waiting.ws.send(
+                  JSON.stringify({
+                    type: 'join_denied',
+                    roomCode,
+                    message: 'The host declined your request to join this meeting.',
+                  })
+                );
+                waiting.ws.close(1008, 'Denied by host');
+              } catch {}
+            }
+            sendToHost(room, {
+              type: 'waiting_requests',
+              waitingRequests: serializeWaitingPeers(room),
+            });
+            sendToHost(room, {
+              type: 'denied_list',
+              deniedList: serializeDeniedList(room),
+            });
+          }
+          return;
+        }
+
+        if (msg.type === 'host_remove_participant' && msg.targetClientId) {
+          const targetId = String(msg.targetClientId);
+          if (targetId === clientId) return;
+          const target = room.participants.get(targetId);
+          if (target) {
+            room.participants.delete(targetId);
+            room.deniedKeys.set(target.guestKey, {
+              guestKey: target.guestKey,
+              name: target.name,
+              deniedAt: new Date().toISOString(),
+            });
+            if (target.ws.readyState === WebSocket.OPEN) {
+              try {
+                target.ws.send(
+                  JSON.stringify({
+                    type: 'removed_from_room',
+                    roomCode,
+                    message: 'You were removed from this meeting by the host.',
+                  })
+                );
+                target.ws.close(1008, 'Removed by host');
+              } catch {}
+            }
+            broadcastToRoom(room, { type: 'peer_left', peerId: targetId });
+            broadcastToRoom(room, { type: 'presence', participants: serializePresence(room) });
+            sendToHost(room, {
+              type: 'denied_list',
+              deniedList: serializeDeniedList(room),
+            });
+          }
+          return;
+        }
+
+        if (msg.type === 'host_unblock_denied' && msg.guestKey) {
+          room.deniedKeys.delete(String(msg.guestKey));
+          sendToHost(room, {
+            type: 'denied_list',
+            deniedList: serializeDeniedList(room),
+          });
+          return;
+        }
+      }
+
+      // Only admitted participants can send room state, chat, reactions, or WebRTC signals
+      if (!room.participants.has(clientId)) {
+        return;
+      }
 
       if (msg.type === 'sync_nodes' && Array.isArray(msg.nodes)) {
         room.nodes = msg.nodes.slice(0, 120);
@@ -5646,21 +7534,52 @@ collabWss.on('connection', (clientWs: WebSocket, req?: http.IncomingMessage) => 
 
   const cleanupPeer = () => {
     if (!room) return;
-    room.participants.delete(clientId);
-    broadcastToRoom(room, { type: 'peer_left', peerId: clientId });
+    const wasWaiting = room.waitingPeers.delete(clientId);
+    if (wasWaiting) {
+      sendToHost(room, {
+        type: 'waiting_requests',
+        waitingRequests: serializeWaitingPeers(room),
+      });
+    }
+
+    const wasAdmitted = room.participants.delete(clientId);
+    if (room.hostClientId === clientId) {
+      room.hostClientId = null;
+      // Inform waiting peers that host stepped out
+      room.waitingPeers.forEach((w) => {
+        if (w.ws.readyState === WebSocket.OPEN) {
+          try {
+            w.ws.send(
+              JSON.stringify({
+                type: 'waiting_approval',
+                clientId: w.clientId,
+                roomCode,
+                hostPresent: false,
+                message: 'Waiting for the host to return and admit you...',
+              })
+            );
+          } catch {}
+        }
+      });
+    }
+
+    if (wasAdmitted) {
+      broadcastToRoom(room, { type: 'peer_left', peerId: clientId });
+      broadcastToRoom(room, {
+        type: 'presence',
+        participants: serializePresence(room),
+      });
+    }
+
     if (
       room.participants.size === 0 &&
+      room.waitingPeers.size === 0 &&
       room.nodes.length === 0 &&
       room.slides.length === 0 &&
       room.meetingNotes.length === 0 &&
       room.chatMessages.length === 0
     ) {
       activeCollabRooms.delete(roomCode);
-    } else {
-      broadcastToRoom(room, {
-        type: 'presence',
-        participants: serializePresence(room),
-      });
     }
   };
 
@@ -5668,6 +7587,110 @@ collabWss.on('connection', (clientWs: WebSocket, req?: http.IncomingMessage) => 
   clientWs.on('error', (err: any) => {
     recordFailure('error', 'WebSockets', `/api/collab-room (${roomCode})`, 500, err?.message || 'Collab WebSocket error');
     cleanupPeer();
+  });
+});
+
+// ==========================================
+// 12A-B. USER ACCESS CONTROL API (REVOKE & BLOCK)
+// ==========================================
+app.get('/api/access/status', (req, res) => {
+  const authHeader = String(req.headers.authorization || '');
+  const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+  const claims = idToken ? decodeFirebaseJwtClaims(idToken) : null;
+  const uid = claims?.uid || String(req.query.uid || '').trim() || undefined;
+  const email = claims?.email || String(req.query.email || '').trim().toLowerCase() || undefined;
+
+  if (!uid && !email) {
+    return res.json({ status: 'active', revokedAfterMs: 0 });
+  }
+  if (email === PLATFORM_OWNER_EMAIL) {
+    return res.json({ status: 'active', revokedAfterMs: 0 });
+  }
+  const rec = findUserAccessRecord(uid, email);
+  if (!rec) {
+    return res.json({ status: 'active', revokedAfterMs: 0 });
+  }
+  if (rec.status === 'revoked') {
+    const tokenIssuedMs = claims?.authTimeMs || claims?.iatMs || 0;
+    if (tokenIssuedMs && tokenIssuedMs >= rec.revokedAfterMs) {
+      return res.json({ status: 'active', revokedAfterMs: rec.revokedAfterMs });
+    }
+  }
+  return res.json({
+    status: rec.status,
+    revokedAfterMs: rec.revokedAfterMs,
+    reason: rec.reason || '',
+    updatedAt: rec.updatedAt,
+  });
+});
+
+app.get('/api/admin/user-access', async (req, res) => {
+  const authCheck = await verifyAdminRequest(req);
+  if (!authCheck.ok) {
+    return res.status(authCheck.status || 403).json({ error: authCheck.error });
+  }
+  return res.json({ records: Array.from(runtimeUserAccessMap.values()) });
+});
+
+app.post('/api/admin/user-access', async (req, res) => {
+  const authCheck = await verifyAdminRequest(req);
+  if (!authCheck.ok) {
+    return res.status(authCheck.status || 403).json({ error: authCheck.error });
+  }
+  const { action, userId, email, displayName, reason } = req.body || {};
+  const cleanUid = String(userId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128);
+  const cleanEmail = String(email || '').trim().toLowerCase().slice(0, 254);
+
+  if (!cleanUid && !cleanEmail) {
+    return res.status(400).json({ error: 'Provide either a user UID or email address.' });
+  }
+  if (cleanEmail === PLATFORM_OWNER_EMAIL || (authCheck.uid && cleanUid === authCheck.uid)) {
+    return res.status(400).json({ error: 'The platform owner account cannot be blocked or revoked.' });
+  }
+
+  const key = cleanUid || `email_${cleanEmail.replace(/[^a-z0-9_-]/g, '_').slice(0, 96)}`;
+  const nowIso = new Date().toISOString();
+  const existing = findUserAccessRecord(cleanUid || key, cleanEmail);
+
+  let nextStatus: 'active' | 'revoked' | 'blocked' = 'active';
+  if (action === 'block') nextStatus = 'blocked';
+  else if (action === 'revoke') nextStatus = 'revoked';
+  else if (action === 'unblock') nextStatus = 'active';
+  else {
+    return res.status(400).json({ error: 'Invalid access action. Expected block, unblock or revoke.' });
+  }
+
+  const record: ServerUserAccessRecord = {
+    userId: cleanUid || existing?.userId || key,
+    email: cleanEmail || existing?.email || '',
+    displayName: String(displayName || existing?.displayName || '').slice(0, 120),
+    status: nextStatus,
+    revokedAfterMs: nextStatus === 'active' ? existing?.revokedAfterMs || 0 : Date.now(),
+    reason: String(reason || (nextStatus === 'blocked' ? 'Blocked by platform administrator.' : nextStatus === 'revoked' ? 'Session revoked by platform administrator.' : '')).slice(0, 300),
+    updatedBy: authCheck.uid || 'admin',
+    updatedAt: nowIso,
+  };
+
+  if (nextStatus === 'active') {
+    runtimeUserAccessMap.delete(record.userId);
+    if (existing?.userId && existing.userId !== record.userId) {
+      runtimeUserAccessMap.delete(existing.userId);
+    }
+  } else {
+    runtimeUserAccessMap.set(record.userId, record);
+    terminateBlockedUserInRooms(record.userId, record.email, nextStatus === 'blocked' ? 'blocked' : 'revoked');
+  }
+  saveUserAccessStore();
+
+  return res.json({
+    ok: true,
+    record,
+    message:
+      nextStatus === 'blocked'
+        ? `Blocked ${record.email || record.userId} across the app.`
+        : nextStatus === 'revoked'
+        ? `Revoked active sessions for ${record.email || record.userId}.`
+        : `Restored access for ${record.email || record.userId}.`,
   });
 });
 
@@ -5893,7 +7916,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 // ==========================================
-// 13. VITE MIDDLEWARE / STATIC ASSET SERVING
+// 13. VITE MIDDLEWARE / STATIC ASSET SERVING + BULLETPROOF SPA FALLBACKS
 // ==========================================
 const isProduction = process.env.NODE_ENV === 'production';
 
@@ -5904,11 +7927,33 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: 'spa',
     });
+
+    // Guarantee shared invite links and deep routes always resolve to SPA HTML cleanly
+    app.get(['/workspace', '/workspace/{*splat}', '/join', '/join/{*splat}', '/admin', '/admin/{*splat}'], async (req, res, next) => {
+      try {
+        const templatePath = path.resolve(__dirname, 'index.html');
+        const rawHtml = fs.readFileSync(templatePath, 'utf-8');
+        const transformed = await vite.transformIndexHtml(req.originalUrl, rawHtml);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(transformed);
+      } catch (e) {
+        next(e);
+      }
+    });
+
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.use((req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+    const distDir = path.resolve(__dirname, 'dist');
+    const fallbackIndex = fs.existsSync(path.join(distDir, 'index.html'))
+      ? path.join(distDir, 'index.html')
+      : path.resolve(__dirname, 'index.html');
+
+    app.use(express.static(distDir));
+    app.get(['/', '/workspace', '/workspace/{*splat}', '/join', '/join/{*splat}', '/admin', '/admin/{*splat}'], (_req, res) => {
+      res.sendFile(fallbackIndex);
+    });
+    app.use((req, res, next) => {
+      if (req.path.startsWith('/api/')) return next();
+      res.sendFile(fallbackIndex);
     });
   }
 

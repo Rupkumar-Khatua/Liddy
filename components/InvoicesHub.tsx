@@ -8,18 +8,18 @@ import {
   buildPrintableInvoiceHtml,
   PAPER_FORMAT_SPECS,
   printFormattedInvoiceViaIframe,
-  TEMPLATE_LABELS,
 } from '../utils/invoicePrint';
 import { triggerFileDownload } from '../services/emailReceiptService';
 
 interface InvoicesHubProps {
   onCreateNew: () => void;
+  onScanPaperBill?: () => void;
 }
 
 type StatusFilter = 'ALL' | 'UNPAID' | 'PAID';
 
-export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
-  const { invoices, markInvoicePaid, deleteInvoice, formatAmount, payoutConfig } = useFinMind();
+export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew, onScanPaperBill }) => {
+  const { invoices, markInvoicePaid, deleteInvoice, formatAmount, payoutConfig, paymentRegion } = useFinMind();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedInvoice, setSelectedInvoice] = useState<{
@@ -27,8 +27,8 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
     previewMode: boolean;
   } | null>(null);
   const [upiTargetInvoice, setUpiTargetInvoice] = useState<Invoice | null>(null);
-  const [defaultPaperFormat, setDefaultPaperFormat] = useState<InvoicePaperFormat>('a4');
-  const [defaultTemplateStyle, setDefaultTemplateStyle] = useState<InvoiceTemplateStyle>('classic');
+  const defaultPaperFormat: InvoicePaperFormat = 'a4';
+  const defaultTemplateStyle: InvoiceTemplateStyle = 'swiss';
 
   const metrics = useMemo(() => {
     const unpaid = invoices.filter((inv) => inv.paymentStatus !== 'paid');
@@ -63,11 +63,13 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
   const handleQuickPdfExport = async (inv: Invoice) => {
     let qr = '';
     try {
-      const activeUpi = inv.upiId?.trim() || payoutConfig.upiId?.trim() || '';
-      if (activeUpi) {
-        const activePayee = inv.payeeName?.trim() || inv.senderName?.trim() || payoutConfig.payeeName || 'Billing Desk';
-        const uri = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activePayee)}&am=${(Number(inv.grandTotal) || 0).toFixed(2)}&tn=${encodeURIComponent(inv.invoiceNumber)}&cu=INR`;
-        qr = await QRCode.toDataURL(uri, { width: 160, margin: 1 });
+      if (paymentRegion === 'IN') {
+        const activeUpi = inv.upiId?.trim() || payoutConfig.upiId?.trim() || '';
+        if (activeUpi) {
+          const activePayee = inv.payeeName?.trim() || inv.senderName?.trim() || payoutConfig.payeeName || 'Billing Desk';
+          const uri = `upi://pay?pa=${encodeURIComponent(activeUpi)}&pn=${encodeURIComponent(activePayee)}&am=${(Number(inv.grandTotal) || 0).toFixed(2)}&tn=${encodeURIComponent(inv.invoiceNumber)}&cu=INR`;
+          qr = await QRCode.toDataURL(uri, { width: 160, margin: 1 });
+        }
       }
     } catch {}
 
@@ -75,7 +77,8 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
       inv,
       qr,
       inv.templateStyle || defaultTemplateStyle,
-      inv.paperFormat || defaultPaperFormat
+      inv.paperFormat || defaultPaperFormat,
+      paymentRegion
     );
     printFormattedInvoiceViaIframe(html);
   };
@@ -133,63 +136,30 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
 
         <div className="bg-neutral-950 text-white border border-neutral-800 rounded-2xl p-5 flex flex-col justify-between gap-3">
           <div>
-            <p className="text-xs font-mono uppercase tracking-wider text-neutral-400">New Structured Invoice</p>
+            <p className="text-xs font-mono uppercase tracking-wider text-neutral-400">Swiss Digital Studio</p>
             <p className="text-sm text-neutral-200 mt-1">
-              Print-ready A4, US Letter &amp; 80mm POS formats with UPI QR &amp; Gmail delivery.
+              Build crisp bills or convert paper receipts into digital templates.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onCreateNew}
-            className="w-full py-2.5 px-4 rounded-xl bg-white text-neutral-950 hover:bg-neutral-100 text-xs font-bold cursor-pointer transition-colors whitespace-nowrap"
-          >
-            + Create New Invoice
-          </button>
-        </div>
-      </div>
-
-      {/* Global Print Size & Theme Defaults Strip */}
-      <div className="bg-white dark:bg-neutral-900/80 border border-neutral-200/80 dark:border-neutral-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="font-mono text-neutral-500 uppercase text-[11px]">Export Size:</span>
-            <select
-              value={defaultPaperFormat}
-              onChange={(e) => setDefaultPaperFormat(e.target.value as InvoicePaperFormat)}
-              className="bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-2.5 py-1.5 font-bold outline-none"
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onCreateNew}
+              className="py-2.5 px-3 rounded-xl bg-white text-neutral-950 hover:bg-neutral-100 text-xs font-bold cursor-pointer transition-colors whitespace-nowrap"
             >
-              {(Object.keys(PAPER_FORMAT_SPECS) as InvoicePaperFormat[]).map((pf) => (
-                <option key={pf} value={pf}>
-                  {PAPER_FORMAT_SPECS[pf].label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="font-mono text-neutral-500 uppercase text-[11px]">Theme:</span>
-            <select
-              value={defaultTemplateStyle}
-              onChange={(e) => setDefaultTemplateStyle(e.target.value as InvoiceTemplateStyle)}
-              className="bg-neutral-50 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg px-2.5 py-1.5 font-bold outline-none"
-            >
-              {(Object.keys(TEMPLATE_LABELS) as InvoiceTemplateStyle[]).map((tpl) => (
-                <option key={tpl} value={tpl}>
-                  {TEMPLATE_LABELS[tpl].label}
-                </option>
-              ))}
-            </select>
+              + New Invoice
+            </button>
+            {onScanPaperBill && (
+              <button
+                type="button"
+                onClick={onScanPaperBill}
+                className="py-2.5 px-3 rounded-xl border border-white/25 hover:bg-white/10 text-white text-xs font-bold cursor-pointer transition-colors whitespace-nowrap"
+              >
+                Scan Paper Bill
+              </button>
+            )}
           </div>
         </div>
-
-        {filteredInvoices.length > 0 && (
-          <button
-            type="button"
-            onClick={handleExportRegisterCsv}
-            className="px-3.5 py-1.5 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 font-bold cursor-pointer"
-          >
-            Export Register (.CSV)
-          </button>
-        )}
       </div>
 
       {/* Filter & Register Container */}
@@ -216,13 +186,24 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
             ))}
           </div>
 
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search invoice #, recipient or notes..."
-            className="w-full md:w-72 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200/80 dark:border-neutral-700 rounded-xl px-3.5 py-2 text-xs text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search invoice #, recipient or notes..."
+              className="flex-1 md:w-64 bg-neutral-50 dark:bg-neutral-800 border border-neutral-200/80 dark:border-neutral-700 rounded-xl px-3.5 py-2 text-xs text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            {filteredInvoices.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExportRegisterCsv}
+                className="px-3.5 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Export .CSV
+              </button>
+            )}
+          </div>
         </div>
 
         {filteredInvoices.length > 0 ? (
@@ -297,13 +278,23 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
                             Download PDF
                           </button>
                           {!paid && (
-                            <button
-                              type="button"
-                              onClick={() => setUpiTargetInvoice(inv)}
-                              className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
-                            >
-                              Pay UPI
-                            </button>
+                            paymentRegion === 'IN' ? (
+                              <button
+                                type="button"
+                                onClick={() => setUpiTargetInvoice(inv)}
+                                className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
+                              >
+                                Pay UPI
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedInvoice({ inv, previewMode: false })}
+                                className="px-2.5 py-1.5 rounded-lg bg-[#003087] hover:bg-[#002569] text-white text-xs font-bold cursor-pointer whitespace-nowrap shrink-0"
+                              >
+                                PayPal
+                              </button>
+                            )
                           )}
                           <button
                             type="button"
@@ -328,7 +319,9 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
             </h3>
             <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
               {invoices.length === 0
-                ? 'Build itemized A4, Letter or 80mm POS invoices with embedded UPI QR and one-click PDF or Gmail export.'
+                ? paymentRegion === 'IN'
+                  ? 'Build itemized A4, Letter or 80mm POS invoices with embedded UPI QR and one-click PDF export.'
+                  : 'Build itemized A4, Letter or 80mm POS invoices with PayPal settlement and one-click PDF export.'
                 : 'Try clearing your filter or search query to inspect other bills.'}
             </p>
             <div className="pt-2">
@@ -350,7 +343,7 @@ export const InvoicesHub: React.FC<InvoicesHubProps> = ({ onCreateNew }) => {
         onClose={() => setSelectedInvoice(null)}
       />
 
-      {upiTargetInvoice && (
+      {paymentRegion === 'IN' && upiTargetInvoice && (
         <UPIPaymentModal
           isOpen={Boolean(upiTargetInvoice)}
           onClose={() => setUpiTargetInvoice(null)}

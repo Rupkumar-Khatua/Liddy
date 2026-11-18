@@ -11,6 +11,12 @@ import {
   AiImageConfig,
   FinancialContextSnapshot,
   AgentLedgerOperations,
+  ReceiptExtractionResult,
+  PaymentRegion,
+  AgentChartSpec,
+  AgentCsvExportSpec,
+  AgentPdfReportSpec,
+  SkillsShCatalogItem,
 } from "../types";
 
 export type AgentMode = 'chat' | 'web' | 'agent' | 'ocr';
@@ -27,6 +33,35 @@ export interface AgentQueryResult {
   groundingUrls?: Array<{ title: string; uri: string }>;
   activatedTools?: string[];
   ledgerOperations?: AgentLedgerOperations;
+  charts?: AgentChartSpec[];
+  csvExport?: AgentCsvExportSpec | null;
+  pdfReport?: AgentPdfReportSpec | null;
+}
+
+export interface ActiveAgentSkillPayload {
+  name: string;
+  slug: string;
+  category: string;
+  triggers?: string;
+  instructionsMarkdown: string;
+}
+
+export interface ActiveMcpConnectorPayload {
+  name: string;
+  slug: string;
+  category: string;
+  transport: 'builtin' | 'http' | 'sse';
+  endpointUrl?: string;
+  toolsList?: string[];
+}
+
+export interface McpInspectResult {
+  ok: boolean;
+  serverName?: string;
+  protocolVersion?: string;
+  tools: string[];
+  latencyMs?: number;
+  error?: string;
 }
 
 const FRIENDLY_AGENT_ERROR =
@@ -38,22 +73,32 @@ export const queryFinanceAgent = async (
   mode: AgentMode = 'chat',
   attachment?: AgentAttachment | null,
   history: Array<{ role: 'user' | 'model'; text: string }> = [],
-  financialContext?: FinancialContextSnapshot
+  financialContext?: FinancialContextSnapshot,
+  activeSkills?: ActiveAgentSkillPayload[],
+  activeConnectors?: ActiveMcpConnectorPayload[]
 ): Promise<AgentQueryResult> => {
   try {
     const res = await fetch('/api/gemini/agent', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, mode, attachment, history, financialContext }),
+      body: JSON.stringify({
+        prompt,
+        mode,
+        attachment,
+        history,
+        financialContext,
+        activeSkills,
+        activeConnectors,
+      }),
     });
 
+    const data = await res.json().catch(() => null);
     if (!res.ok) {
-      throw new Error(FRIENDLY_AGENT_ERROR);
+      throw new Error(data?.error || FRIENDLY_AGENT_ERROR);
     }
 
-    const data = await res.json().catch(() => null);
     if (!data || !data.text) {
-      throw new Error(FRIENDLY_AGENT_ERROR);
+      throw new Error(data?.error || FRIENDLY_AGENT_ERROR);
     }
 
     return {
@@ -61,6 +106,9 @@ export const queryFinanceAgent = async (
       groundingUrls: data.groundingUrls || [],
       activatedTools: Array.isArray(data.activatedTools) ? data.activatedTools : [],
       ledgerOperations: data.ledgerOperations || {},
+      charts: Array.isArray(data.charts) ? data.charts : [],
+      csvExport: data.csvExport || null,
+      pdfReport: data.pdfReport || null,
     };
   } catch (err: any) {
     console.warn("Finance agent query notice:", err?.message || err);
@@ -68,13 +116,69 @@ export const queryFinanceAgent = async (
   }
 };
 
-// --- 2. Receipt Scanning (Vision) ---
-export const analyzeReceipt = async (base64Data: string): Promise<Partial<Transaction> | null> => {
+export const searchSkillsRegistry = async (
+  query: string = ''
+): Promise<{ skills: SkillsShCatalogItem[]; source: string }> => {
+  try {
+    const res = await fetch(`/api/skills/search?q=${encodeURIComponent(query.trim())}`);
+    if (!res.ok) return { skills: [], source: 'error' };
+    const data = await res.json();
+    return {
+      skills: Array.isArray(data?.skills) ? data.skills : [],
+      source: String(data?.source || 'curated'),
+    };
+  } catch {
+    return { skills: [], source: 'offline' };
+  }
+};
+
+export const inspectMcpConnector = async (payload: {
+  endpointUrl: string;
+  transport: 'builtin' | 'http' | 'sse';
+  authType?: 'none' | 'bearer' | 'api_key';
+  authToken?: string;
+}): Promise<McpInspectResult> => {
+  try {
+    const res = await fetch('/api/mcp/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data) {
+      return {
+        ok: false,
+        tools: [],
+        error: data?.error || `Connection check returned status ${res.status}`,
+      };
+    }
+    return {
+      ok: Boolean(data.ok),
+      serverName: data.serverName,
+      protocolVersion: data.protocolVersion,
+      tools: Array.isArray(data.tools) ? data.tools : [],
+      latencyMs: typeof data.latencyMs === 'number' ? data.latencyMs : undefined,
+      error: data.error,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      tools: [],
+      error: err?.message || 'Unable to reach MCP server.',
+    };
+  }
+};
+
+// --- 2. Receipt & Handwritten Bill Scanning (Vision) ---
+export const analyzeReceipt = async (
+  base64Data: string,
+  mimeType: string = 'image/jpeg'
+): Promise<ReceiptExtractionResult | null> => {
   try {
     const res = await fetch('/api/gemini/receipt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ base64Data }),
+      body: JSON.stringify({ base64Data, mimeType }),
     });
 
     if (!res.ok) {
@@ -181,6 +285,49 @@ export const generateGoalVisualDetailed = async (
 export const generateGoalImage = async (prompt: string): Promise<string | null> => {
   const res = await generateGoalVisualDetailed(prompt);
   return res.imageUrl;
+};
+
+export const editGoalVisualImage = async (
+  imageDataUrl: string,
+  instruction: string,
+  aspectRatio: VisualAspectRatio = '16:9'
+): Promise<GeneratedVisualResult> => {
+  const res = await fetch('/api/gemini/edit-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ imageDataUrl, instruction, aspectRatio }),
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data?.imageUrl) {
+    throw new Error(data?.error || `Image editing failed (${res.status})`);
+  }
+  return {
+    imageUrl: data.imageUrl,
+    format: data.format,
+    mode: data.mode,
+    statusMessage: data.statusMessage,
+    provider: data.provider,
+    model: data.model,
+  };
+};
+
+export const fetchDetectedRegion = async (
+  tzHint?: string
+): Promise<{ region: PaymentRegion; countryCode: string; source: string } | null> => {
+  try {
+    const query = tzHint ? `?tz=${encodeURIComponent(tzHint)}` : '';
+    const res = await fetch(`/api/geo/region${query}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      region: data?.region === 'IN' ? 'IN' : 'INTL',
+      countryCode: String(data?.countryCode || 'INTL'),
+      source: String(data?.source || 'server'),
+    };
+  } catch {
+    return null;
+  }
 };
 
 // --- 4. Enhance Financial Prompt ---

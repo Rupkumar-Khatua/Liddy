@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { createPortal } from 'react-dom';
-import PptxGenJS from 'pptxgenjs';
 import {
   enhanceFinancialPrompt,
   startImageRenderJob,
@@ -8,20 +6,32 @@ import {
   cancelImageRenderJob,
 } from '../services/geminiService';
 import { triggerFileDownload } from '../services/emailReceiptService';
+import {
+  exportSlidesAsPdf,
+  exportSlidesAsPptx,
+  exportSlidesAsMarkdown,
+  exportSlidesAsJson,
+} from '../utils/slideDeckExporter';
 import { useFinMind } from '../context/FinMindContext';
 import {
   MindMapNode,
   MindMapShape,
   SlideItem,
   SlideTheme,
+  SlideFontStyle,
+  SlideContentStyle,
+  SlideGraphicsStyle,
   CollabNote,
   CollabParticipant,
+  CollabWaitingPeer,
+  CollabDeniedEntry,
   CollabChatMessage,
   IdeationBoardRecord,
   VisualStylePreset,
   VisualAspectRatio,
   ImageRenderJobState,
 } from '../types';
+import { GoalImageEditorModal } from './GoalImageEditorModal';
 
 type VisionStudioTab = 'mindmap' | 'slides' | 'room' | 'visuals';
 const VISION_TABS: VisionStudioTab[] = ['mindmap', 'slides', 'room', 'visuals'];
@@ -119,7 +129,7 @@ const DEFAULT_SLIDES: SlideItem[] = [
       'Share live deliverables cleanly with stakeholders and partners',
     ],
     layout: 'cover',
-    theme: 'midnight',
+    theme: 'ivory',
     metricHighlight: 'Q1 Launch',
   },
   {
@@ -132,7 +142,7 @@ const DEFAULT_SLIDES: SlideItem[] = [
       '75% target gross margin with disciplined operating spend',
     ],
     layout: 'metrics',
-    theme: 'midnight',
+    theme: 'ivory',
     metricHighlight: '75% Margin',
   },
   {
@@ -141,11 +151,11 @@ const DEFAULT_SLIDES: SlideItem[] = [
     subtitle: 'From prototype validation to full scale',
     bullets: [
       'Phase 1 · Validate core workflows with 25 active design partners',
-      'Phase 2 · Launch multi-format exports and live shared video rooms',
-      'Phase 3 · Scale organic referrals and team workspace adoption',
+      'Phase 2 · Launch interactive HTML decks and live shared video rooms',
+      'Phase 3 · Scale organic referrals and daily workspace adoption',
     ],
     layout: 'roadmap',
-    theme: 'midnight',
+    theme: 'ivory',
     metricHighlight: '90 Days',
   },
 ];
@@ -209,79 +219,191 @@ const SLIDE_THEMES: Record<
     mutedClass: string;
     accentText: string;
     cardClass: string;
-    pptxBg: string;
-    pptxText: string;
-    pptxAccent: string;
-    pptxCard: string;
+    bgHex: string;
+    textHex: string;
+    mutedHex: string;
+    accentHex: string;
+    cardHex: string;
+    borderHex: string;
   }
 > = {
-  midnight: {
-    label: 'Midnight Slate',
-    bgClass: 'bg-gradient-to-br from-[#0B1120] via-[#0F172A] to-[#172554]',
-    textClass: 'text-white',
-    mutedClass: 'text-slate-300',
-    accentText: 'text-sky-400',
-    cardClass: 'bg-white/[0.06] border border-white/12',
-    pptxBg: '0F172A',
-    pptxText: 'F8FAFC',
-    pptxAccent: '38BDF8',
-    pptxCard: '1E293B',
-  },
   ivory: {
-    label: 'Editorial Ivory',
-    bgClass: 'bg-gradient-to-br from-[#FAF8F4] via-[#FFFFFF] to-[#F3EFE6]',
-    textClass: 'text-neutral-900',
-    mutedClass: 'text-neutral-600',
-    accentText: 'text-indigo-700',
-    cardClass: 'bg-white border border-neutral-200/90 shadow-xs',
-    pptxBg: 'FAF8F4',
-    pptxText: '0F172A',
-    pptxAccent: '4338CA',
-    pptxCard: 'FFFFFF',
+    label: 'Swiss Paper',
+    bgClass: 'bg-[#FFFFFF] border border-[#E5E5E5]',
+    textClass: 'text-[#111111]',
+    mutedClass: 'text-[#525252]',
+    accentText: 'text-[#1D4ED8]',
+    cardClass: 'bg-[#FAFAFA] border border-[#E5E5E5]',
+    bgHex: '#FFFFFF',
+    textHex: '#111111',
+    mutedHex: '#525252',
+    accentHex: '#1D4ED8',
+    cardHex: '#FAFAFA',
+    borderHex: '#E5E5E5',
+  },
+  midnight: {
+    label: 'Obsidian Swiss',
+    bgClass: 'bg-[#0F1115] border border-[#232732]',
+    textClass: 'text-[#F8FAFC]',
+    mutedClass: 'text-[#94A3B8]',
+    accentText: 'text-[#38BDF8]',
+    cardClass: 'bg-[#161922] border border-[#262B38]',
+    bgHex: '#0F1115',
+    textHex: '#F8FAFC',
+    mutedHex: '#94A3B8',
+    accentHex: '#38BDF8',
+    cardHex: '#161922',
+    borderHex: '#262B38',
   },
   emerald: {
-    label: 'Forest Emerald',
-    bgClass: 'bg-gradient-to-br from-[#042F2E] via-[#064E3B] to-[#022C22]',
-    textClass: 'text-white',
-    mutedClass: 'text-emerald-100/85',
-    accentText: 'text-emerald-300',
-    cardClass: 'bg-white/[0.08] border border-emerald-300/20',
-    pptxBg: '064E3B',
-    pptxText: 'ECFDF5',
-    pptxAccent: '34D399',
-    pptxCard: '065F46',
+    label: 'Sage Studio',
+    bgClass: 'bg-[#F6FAF8] border border-[#D1E3DA]',
+    textClass: 'text-[#0F241B]',
+    mutedClass: 'text-[#3E5C4E]',
+    accentText: 'text-[#047857]',
+    cardClass: 'bg-[#FFFFFF] border border-[#DCEADF]',
+    bgHex: '#F6FAF8',
+    textHex: '#0F241B',
+    mutedHex: '#3E5C4E',
+    accentHex: '#047857',
+    cardHex: '#FFFFFF',
+    borderHex: '#DCEADF',
   },
   cobalt: {
-    label: 'Cobalt Executive',
-    bgClass: 'bg-gradient-to-br from-[#172554] via-[#1E3A8A] to-[#0F172A]',
-    textClass: 'text-white',
-    mutedClass: 'text-blue-100/85',
-    accentText: 'text-amber-300',
-    cardClass: 'bg-white/[0.08] border border-blue-300/20',
-    pptxBg: '1E3A8A',
-    pptxText: 'FFFFFF',
-    pptxAccent: 'FCD34D',
-    pptxCard: '1D4ED8',
+    label: 'Cobalt Brief',
+    bgClass: 'bg-[#F5F8FF] border border-[#D5E0FA]',
+    textClass: 'text-[#0F172A]',
+    mutedClass: 'text-[#475569]',
+    accentText: 'text-[#1E40AF]',
+    cardClass: 'bg-[#FFFFFF] border border-[#DCE5FA]',
+    bgHex: '#F5F8FF',
+    textHex: '#0F172A',
+    mutedHex: '#475569',
+    accentHex: '#1E40AF',
+    cardHex: '#FFFFFF',
+    borderHex: '#DCE5FA',
+  },
+  ledger: {
+    label: 'Warm Ledger',
+    bgClass: 'bg-[#FCFBF7] border border-[#E6DFD1]',
+    textClass: 'text-[#1C1917]',
+    mutedClass: 'text-[#57534E]',
+    accentText: 'text-[#B45309]',
+    cardClass: 'bg-[#FFFFFF] border border-[#EAE4D7]',
+    bgHex: '#FCFBF7',
+    textHex: '#1C1917',
+    mutedHex: '#57534E',
+    accentHex: '#B45309',
+    cardHex: '#FFFFFF',
+    borderHex: '#EAE4D7',
+  },
+  navy: {
+    label: 'Institutional Navy',
+    bgClass: 'bg-[#0B1528] border border-[#1E2E4A]',
+    textClass: 'text-[#F1F5F9]',
+    mutedClass: 'text-[#94A3B8]',
+    accentText: 'text-[#60A5FA]',
+    cardClass: 'bg-[#12203B] border border-[#243758]',
+    bgHex: '#0B1528',
+    textHex: '#F1F5F9',
+    mutedHex: '#94A3B8',
+    accentHex: '#60A5FA',
+    cardHex: '#12203B',
+    borderHex: '#243758',
+  },
+  charcoal: {
+    label: 'Monochrome Slate',
+    bgClass: 'bg-[#18181B] border border-[#27272A]',
+    textClass: 'text-[#FAFAFA]',
+    mutedClass: 'text-[#A1A1AA]',
+    accentText: 'text-[#E4E4E7]',
+    cardClass: 'bg-[#202024] border border-[#2E2E33]',
+    bgHex: '#18181B',
+    textHex: '#FAFAFA',
+    mutedHex: '#A1A1AA',
+    accentHex: '#E4E4E7',
+    cardHex: '#202024',
+    borderHex: '#2E2E33',
+  },
+  growth: {
+    label: 'Wealth Emerald',
+    bgClass: 'bg-[#06241B] border border-[#0E3F30]',
+    textClass: 'text-[#ECFDF5]',
+    mutedClass: 'text-[#A7F3D0]',
+    accentText: 'text-[#34D399]',
+    cardClass: 'bg-[#0A3025] border border-[#144B3A]',
+    bgHex: '#06241B',
+    textHex: '#ECFDF5',
+    mutedHex: '#A7F3D0',
+    accentHex: '#34D399',
+    cardHex: '#0A3025',
+    borderHex: '#144B3A',
   },
 };
 
+const SLIDE_FONTS: Record<SlideFontStyle, { label: string; sample: string; cssFamily: string }> = {
+  swiss_sans: {
+    label: 'Swiss Modern Sans',
+    sample: 'Inter Clean Sans',
+    cssFamily: "-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif",
+  },
+  editorial_serif: {
+    label: 'Editorial Serif',
+    sample: 'Classic Financial Broadsheet',
+    cssFamily: "Georgia, 'Times New Roman', serif",
+  },
+  mono_quant: {
+    label: 'Quant Terminal',
+    sample: 'Monospace Precision Figures',
+    cssFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+  },
+  executive_geometric: {
+    label: 'Executive Geometric',
+    sample: 'Boardroom Clarity',
+    cssFamily: "'Plus Jakarta Sans', 'Avenir Next', -apple-system, sans-serif",
+  },
+};
+
+const SLIDE_CONTENT_DENSITY: Array<{ id: SlideContentStyle; label: string; desc: string }> = [
+  { id: 'short', label: 'Short', desc: 'High-impact headlines & 2 KPI bullets' },
+  { id: 'brief', label: 'Brief', desc: 'Concise 3 crisp executive bullets' },
+  { id: 'medium', label: 'Medium', desc: 'Balanced insights & context figures' },
+  { id: 'detailed', label: 'Detailed', desc: 'Analytical depth for deep reviews' },
+];
+
+const SLIDE_GRAPHICS_OPTIONS: Array<{ id: SlideGraphicsStyle; label: string; desc: string }> = [
+  { id: 'charts', label: 'Financial Charts', desc: 'Bar plots & quarterly return visuals' },
+  { id: 'diagrams', label: 'Allocation Flows', desc: 'Capital split diagrams & callouts' },
+  { id: 'cards', label: 'Metric Cards', desc: 'Structured Swiss KPI grid tiles' },
+  { id: 'roadmap', label: 'Timeline Roadmap', desc: 'Phased quarterly milestones' },
+];
+
+const SLIDE_COUNT_PRESETS = [4, 6, 8, 10, 12, 15];
+
+const SLIDE_AUDIENCE_PRESETS = [
+  'Personal Wealth Plan',
+  'Household Budget Review',
+  'Investor / LP Brief',
+  'CFO & Board Review',
+];
+
 const MAP_PROMPT_IDEAS = [
   'Launch a family budget and weekly savings system',
-  'Plan a new online coffee subscription brand from scratch',
-  'Organize my 2025 personal career & learning roadmap',
+  'Plan a debt-free payoff & emergency reserve architecture',
+  'Organize my 5-year investment allocation & compounding roadmap',
 ];
 
 const SLIDE_PROMPT_IDEAS = [
-  'Pitch deck for an everyday personal money & goal planning app',
-  'Quarterly family or small business financial review presentation',
-  '90-day product launch plan with goals, metrics and roadmap',
+  'Q4 Portfolio Allocation, CAGR Targets & Risk Review',
+  'Annual Household Cashflow, Savings Rate & Runway Brief',
+  '5-Year Debt Payoff, Index SIP & Tax Optimization Plan',
 ];
 
 const VISUAL_PROMPT_IDEAS = [
-  'A sunlit ceramic pour-over coffee setup on a warm oak cafe table',
-  'Sleek electric delivery scooter parked on a vibrant evening street',
-  'Handcrafted leather journal and brass pen beside fresh espresso',
-  'Botanical glasshouse conservatory with lush ferns and soft mist',
+  'Sunlit coastal villa representing my 5-year mortgage-free milestone',
+  'Minimalist architect desk with compounding wealth ledger at sunrise',
+  'Electric grand tourer parked at dusk symbolizing my paid-in-full vehicle goal',
+  'Calm Nordic timber cabin in pine mountains representing financial independence',
 ];
 
 const VISUAL_STYLE_PRESETS: Array<{ id: VisualStylePreset; label: string }> = [
@@ -511,12 +633,11 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
   const [hasMapOutput, setHasMapOutput] = useState(false);
   const [hasSlidesOutput, setHasSlidesOutput] = useState(false);
 
-  // Per-tab Export Menus & Slide Print/PDF Modal State
+  // Per-tab Export Menus
   const [mapExportMenuOpen, setMapExportMenuOpen] = useState(false);
+  const mapExportMenuRef = useRef<HTMLDivElement>(null);
   const [slideExportMenuOpen, setSlideExportMenuOpen] = useState(false);
   const [exportingPptx, setExportingPptx] = useState(false);
-  const [printPreviewHtml, setPrintPreviewHtml] = useState<string | null>(null);
-  const mapExportMenuRef = useRef<HTMLDivElement>(null);
   const slideExportMenuRef = useRef<HTMLDivElement>(null);
 
   // Separate Per-Tab Prompts & Generation States
@@ -529,7 +650,14 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
   const [enhancingSlides, setEnhancingSlides] = useState(false);
   const [generatingSlides, setGeneratingSlides] = useState(false);
   const [slideError, setSlideError] = useState<string | null>(null);
-  const [deckTheme, setDeckTheme] = useState<SlideTheme>('midnight');
+  const [deckTheme, setDeckTheme] = useState<SlideTheme>('ivory');
+  const [slideCount, setSlideCount] = useState<number>(6);
+  const [slideFontStyle, setSlideFontStyle] = useState<SlideFontStyle>('swiss_sans');
+  const [slideContentStyle, setSlideContentStyle] = useState<SlideContentStyle>('brief');
+  const [slideGraphicsStyle, setSlideGraphicsStyle] = useState<SlideGraphicsStyle>('charts');
+  const [deckAudience, setDeckAudience] = useState<string>('Personal Wealth Plan');
+  const [isSlideConfigOpen, setIsSlideConfigOpen] = useState<boolean>(false);
+  const [configStep, setConfigStep] = useState<1 | 2 | 3>(1);
 
   // Full-Size Auto-Expanding Mind Map State (Zoom, Pan, Fullscreen, Hover Card & Inline Editing)
   const [nodes, setNodes] = useState<MindMapNode[]>(DEFAULT_NODES);
@@ -623,8 +751,27 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
   const [activeSlideId, setActiveSlideId] = useState<string>(DEFAULT_SLIDES[0].id);
 
   // Live Team Room Conferencing State
-  const [collabName, setCollabName] = useState(currentUser?.displayName || 'Host');
-  const [collabRole, setCollabRole] = useState('Team Host');
+  const [collabName, setCollabName] = useState(
+    currentUser?.displayName || (initialRoomCode ? 'Guest' : 'Host')
+  );
+  const [collabRole, setCollabRole] = useState(() => (initialRoomCode ? 'Invited Guest' : 'Team Host'));
+  const [guestKey] = useState<string>(() => {
+    try {
+      const existing = localStorage.getItem('liddy_video_guest_key');
+      if (existing) return existing;
+      const created = `gk_${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`;
+      localStorage.setItem('liddy_video_guest_key', created);
+      return created;
+    } catch {
+      return `gk_${Math.random().toString(36).slice(2, 10)}`;
+    }
+  });
+  const [isInviteMode, setIsInviteMode] = useState<boolean>(() => Boolean(initialRoomCode));
+  const [roomJoinState, setRoomJoinState] = useState<'idle' | 'waiting' | 'connected' | 'denied'>('idle');
+  const [isRoomHost, setIsRoomHost] = useState(false);
+  const [waitingStatusMessage, setWaitingStatusMessage] = useState('');
+  const [waitingRequests, setWaitingRequests] = useState<CollabWaitingPeer[]>([]);
+  const [deniedEntries, setDeniedEntries] = useState<CollabDeniedEntry[]>([]);
   const [isRoomConnected, setIsRoomConnected] = useState(false);
   const [participants, setParticipants] = useState<CollabParticipant[]>([]);
   const [meetingNotes, setMeetingNotes] = useState<CollabNote[]>([]);
@@ -649,6 +796,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
   const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState<string>('');
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState<string>('');
+  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
   const [callElapsedSec, setCallElapsedSec] = useState(0);
   const [isStageFullscreen, setIsStageFullscreen] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -682,6 +830,12 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
   const [isEnhancingVisual, setIsEnhancingVisual] = useState(false);
   const [visualError, setVisualError] = useState<string | null>(null);
   const [currentVisualResult, setCurrentVisualResult] = useState<string | null>(null);
+  const [editorTarget, setEditorTarget] = useState<{
+    imageUrl: string;
+    title: string;
+    targetType: 'preview' | 'gallery';
+    aspectRatio: VisualAspectRatio;
+  } | null>(null);
   const visualInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -793,8 +947,13 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
     const activeAudioTrack = localStreamRef.current?.getAudioTracks()[0] || null;
 
     const senders = pc.getSenders();
-    const videoSender = senders.find((s) => s.track?.kind === 'video');
-    const audioSender = senders.find((s) => s.track?.kind === 'audio');
+    const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+    const videoSender =
+      senders.find((s) => s.track?.kind === 'video') ||
+      transceivers.find((t) => t.receiver.track?.kind === 'video')?.sender;
+    const audioSender =
+      senders.find((s) => s.track?.kind === 'audio') ||
+      transceivers.find((t) => t.receiver.track?.kind === 'audio')?.sender;
 
     if (activeVideoTrack) {
       if (videoSender) {
@@ -957,29 +1116,39 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
     setScreenOn(false);
   }, []);
 
-  const disconnectRoom = useCallback(() => {
-    peerConnectionsRef.current.forEach((pc) => {
-      try {
-        pc.close();
-      } catch {}
-    });
-    peerConnectionsRef.current.clear();
-    pendingIceRef.current.clear();
-    setRemoteStreams({});
+  const disconnectRoom = useCallback(
+    (preserveDeniedState = false) => {
+      peerConnectionsRef.current.forEach((pc) => {
+        try {
+          pc.close();
+        } catch {}
+      });
+      peerConnectionsRef.current.clear();
+      pendingIceRef.current.clear();
+      setRemoteStreams({});
 
-    if (collabWsRef.current) {
-      collabWsRef.current.close();
-      collabWsRef.current = null;
-    }
-    stopAllMedia();
-    myPeerIdRef.current = '';
-    setIsRoomConnected(false);
-    setHandRaised(false);
-    setDeviceMenuOpen(null);
-    setReactionMenuOpen(false);
-    setPinnedPeerId(null);
-    setParticipants([]);
-  }, [stopAllMedia]);
+      if (collabWsRef.current) {
+        collabWsRef.current.close();
+        collabWsRef.current = null;
+      }
+      stopAllMedia();
+      myPeerIdRef.current = '';
+      setIsRoomConnected(false);
+      setIsRoomHost(false);
+      setWaitingRequests([]);
+      setDeniedEntries([]);
+      setWaitingStatusMessage('');
+      if (!preserveDeniedState) {
+        setRoomJoinState('idle');
+      }
+      setHandRaised(false);
+      setDeviceMenuOpen(null);
+      setReactionMenuOpen(false);
+      setPinnedPeerId(null);
+      setParticipants([]);
+    },
+    [stopAllMedia]
+  );
 
   const reconcilePeers = useCallback(
     (nextParticipants: CollabParticipant[]) => {
@@ -1007,144 +1176,226 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
     [closePeerConnection, initiateOfferToPeer]
   );
 
-  const connectToRoom = useCallback(() => {
-    if (!trackEngagement('Live Video Room')) return;
-    if (collabWsRef.current) {
-      collabWsRef.current.close();
-      collabWsRef.current = null;
-    }
-    setMediaError(null);
+  const connectToRoom = useCallback(
+    (requestedMode?: 'host' | 'knock') => {
+      if (!trackEngagement('Live Video Room')) return;
+      const cleanCode = roomCode.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+      if (!cleanCode || cleanCode.length < 3) {
+        setMediaError('Enter a valid meeting room code to continue.');
+        return;
+      }
+      const cleanName = collabName.trim();
+      if (!cleanName) {
+        setMediaError('Enter your name so the host knows who is asking to join.');
+        return;
+      }
 
-    const code = roomCode.trim().toUpperCase() || 'ROOM-101';
-    onRoomCodeChange?.(code);
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/api/collab-room?room=${encodeURIComponent(
-      code
-    )}&name=${encodeURIComponent(collabName.trim() || 'Host')}&role=${encodeURIComponent(
-      collabRole.trim() || 'Member'
-    )}`;
+      if (collabWsRef.current) {
+        collabWsRef.current.close();
+        collabWsRef.current = null;
+      }
+      setMediaError(null);
 
-    const ws = new WebSocket(wsUrl);
-    collabWsRef.current = ws;
+      const joinMode: 'host' | 'knock' = requestedMode || (isInviteMode ? 'knock' : 'host');
+      const roleValue = collabRole.trim() || (joinMode === 'host' ? 'Host' : 'Guest');
+      onRoomCodeChange?.(cleanCode);
+      setRoomCode(cleanCode);
+      setWaitingStatusMessage(
+        joinMode === 'knock'
+          ? 'Sending join request to the host...'
+          : 'Opening meeting room as host...'
+      );
+      setRoomJoinState('waiting');
 
-    ws.onopen = () => {
-      setIsRoomConnected(true);
-      logAnalyticsEvent('vision_collab', 'vision', `join_room:${code}`);
-      showToast(`Connected to meeting room ${code}.`);
-    };
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const uidParam = currentUser?.uid ? `&uid=${encodeURIComponent(currentUser.uid)}` : '';
+      const emailParam = currentUser?.email ? `&email=${encodeURIComponent(currentUser.email)}` : '';
+      const wsUrl = `${protocol}//${window.location.host}/api/collab-room?room=${encodeURIComponent(
+        cleanCode
+      )}&name=${encodeURIComponent(cleanName)}&role=${encodeURIComponent(
+        roleValue
+      )}&mode=${joinMode}&guestKey=${encodeURIComponent(guestKey)}${uidParam}${emailParam}`;
 
-    ws.onmessage = async (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === 'room_state') {
-          if (msg.peerId || msg.clientId) {
-            myPeerIdRef.current = msg.peerId || msg.clientId;
-          }
-          if (Array.isArray(msg.participants)) {
+      const ws = new WebSocket(wsUrl);
+      collabWsRef.current = ws;
+
+      ws.onmessage = async (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'waiting_approval') {
+            setIsRoomConnected(false);
+            setIsRoomHost(false);
+            setRoomJoinState('waiting');
+            setWaitingStatusMessage(msg.message || 'Asking the host for permission to join...');
+          } else if (msg.type === 'admitted') {
+            setWaitingStatusMessage('');
+            showToast(`Joined meeting room ${cleanCode}.`);
+          } else if (msg.type === 'room_state') {
+            if (msg.peerId || msg.clientId) {
+              myPeerIdRef.current = msg.peerId || msg.clientId;
+            }
+            const hostFlag = Boolean(msg.isHost);
+            setIsRoomHost(hostFlag);
+            setRoomJoinState('connected');
+            setIsRoomConnected(true);
+            setWaitingStatusMessage('');
+            if (Array.isArray(msg.waitingRequests)) setWaitingRequests(msg.waitingRequests);
+            if (Array.isArray(msg.deniedList)) setDeniedEntries(msg.deniedList);
+            if (Array.isArray(msg.participants)) {
+              setParticipants(msg.participants);
+              reconcilePeers(msg.participants);
+            }
+            if (Array.isArray(msg.nodes) && msg.nodes.length > 0) setNodes(msg.nodes);
+            else if (hostFlag) ws.send(JSON.stringify({ type: 'sync_nodes', nodes: nodesRef.current }));
+
+            if (Array.isArray(msg.slides) && msg.slides.length > 0) {
+              setSlides(msg.slides);
+              setActiveSlideId(msg.slides[0].id);
+            } else if (hostFlag) {
+              ws.send(JSON.stringify({ type: 'sync_slides', slides: slidesRef.current }));
+            }
+            if (Array.isArray(msg.meetingNotes)) setMeetingNotes(msg.meetingNotes);
+            if (Array.isArray(msg.chatMessages)) setChatMessages(msg.chatMessages);
+            ws.send(JSON.stringify({ type: 'media_state', micOn, camOn, screenOn, handRaised }));
+            logAnalyticsEvent('vision_collab', 'vision', `join_room:${cleanCode}:${joinMode}`);
+            showToast(`Connected to meeting room ${cleanCode}.`);
+          } else if (msg.type === 'waiting_requests' && Array.isArray(msg.waitingRequests)) {
+            setWaitingRequests(msg.waitingRequests);
+          } else if (msg.type === 'denied_list' && Array.isArray(msg.deniedList)) {
+            setDeniedEntries(msg.deniedList);
+          } else if (msg.type === 'join_denied' || msg.type === 'removed_from_room') {
+            setMediaError(
+              msg.message ||
+                'The host declined your request or removed you from this room. Re-entry is blocked unless allowed again by the host.'
+            );
+            setRoomJoinState('denied');
+            setIsRoomConnected(false);
+            setIsRoomHost(false);
+            disconnectRoom(true);
+          } else if (msg.type === 'account_blocked' || msg.type === 'account_revoked') {
+            setMediaError(msg.message || 'Your session was terminated by an administrator.');
+            disconnectRoom(false);
+          } else if (msg.type === 'admin_notice' && msg.message) {
+            showToast(`Admin Notice: ${msg.message}`);
+          } else if (msg.type === 'admin_room_closed' && msg.message) {
+            setMediaError(msg.message);
+            disconnectRoom(false);
+          } else if (msg.type === 'presence' && Array.isArray(msg.participants)) {
             setParticipants(msg.participants);
             reconcilePeers(msg.participants);
-          }
-          if (Array.isArray(msg.nodes) && msg.nodes.length > 0) setNodes(msg.nodes);
-          else ws.send(JSON.stringify({ type: 'sync_nodes', nodes: nodesRef.current }));
-
-          if (Array.isArray(msg.slides) && msg.slides.length > 0) {
+          } else if (msg.type === 'peer_left' && msg.peerId) {
+            closePeerConnection(msg.peerId);
+          } else if (msg.type === 'nodes_update' && Array.isArray(msg.nodes)) {
+            setNodes(msg.nodes);
+          } else if (msg.type === 'slides_update' && Array.isArray(msg.slides)) {
             setSlides(msg.slides);
-            setActiveSlideId(msg.slides[0].id);
-          } else {
-            ws.send(JSON.stringify({ type: 'sync_slides', slides: slidesRef.current }));
-          }
-          if (Array.isArray(msg.meetingNotes)) setMeetingNotes(msg.meetingNotes);
-          if (Array.isArray(msg.chatMessages)) setChatMessages(msg.chatMessages);
-          ws.send(JSON.stringify({ type: 'media_state', micOn, camOn, screenOn, handRaised }));
-        } else if (msg.type === 'admin_notice' && msg.message) {
-          showToast(`Admin Notice: ${msg.message}`);
-        } else if (msg.type === 'admin_room_closed' && msg.message) {
-          setMediaError(msg.message);
-          ws.close();
-        } else if (msg.type === 'presence' && Array.isArray(msg.participants)) {
-          setParticipants(msg.participants);
-          reconcilePeers(msg.participants);
-        } else if (msg.type === 'peer_left' && msg.peerId) {
-          closePeerConnection(msg.peerId);
-        } else if (msg.type === 'nodes_update' && Array.isArray(msg.nodes)) {
-          setNodes(msg.nodes);
-        } else if (msg.type === 'slides_update' && Array.isArray(msg.slides)) {
-          setSlides(msg.slides);
-        } else if (msg.type === 'notes_update' && Array.isArray(msg.meetingNotes)) {
-          setMeetingNotes(msg.meetingNotes);
-        } else if (msg.type === 'room_chat_message' && msg.message) {
-          setChatMessages((prev) => [...prev.filter((m) => m.id !== msg.message.id), msg.message].slice(-100));
-          if (sidePanelRef.current !== 'chat') {
-            setUnreadChatCount((c) => c + 1);
-          }
-        } else if (msg.type === 'room_reaction' && msg.emoji) {
-          const item = {
-            id: msg.id || `react_${Date.now()}`,
-            senderName: msg.senderName || 'Member',
-            emoji: msg.emoji,
-          };
-          setReactionsFeed((prev) => [...prev.slice(-7), item]);
-          window.setTimeout(() => {
-            setReactionsFeed((prev) => prev.filter((r) => r.id !== item.id));
-          }, 3200);
-        } else if (msg.type === 'rtc_offer' && msg.fromPeerId && msg.sdp) {
-          const pc = getOrCreatePeerConnection(msg.fromPeerId);
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-          await flushPendingIce(msg.fromPeerId, pc);
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-          sendWs({ type: 'rtc_answer', targetPeerId: msg.fromPeerId, sdp: pc.localDescription });
-        } else if (msg.type === 'rtc_answer' && msg.fromPeerId && msg.sdp) {
-          const pc = peerConnectionsRef.current.get(msg.fromPeerId);
-          if (pc) {
+          } else if (msg.type === 'notes_update' && Array.isArray(msg.meetingNotes)) {
+            setMeetingNotes(msg.meetingNotes);
+          } else if (msg.type === 'room_chat_message' && msg.message) {
+            setChatMessages((prev) => [...prev.filter((m) => m.id !== msg.message.id), msg.message].slice(-100));
+            if (sidePanelRef.current !== 'chat') {
+              setUnreadChatCount((c) => c + 1);
+            }
+          } else if (msg.type === 'room_reaction' && msg.emoji) {
+            const item = {
+              id: msg.id || `react_${Date.now()}`,
+              senderName: msg.senderName || 'Member',
+              emoji: msg.emoji,
+            };
+            setReactionsFeed((prev) => [...prev.slice(-7), item]);
+            window.setTimeout(() => {
+              setReactionsFeed((prev) => prev.filter((r) => r.id !== item.id));
+            }, 3200);
+          } else if (msg.type === 'rtc_offer' && msg.fromPeerId && msg.sdp) {
+            const pc = getOrCreatePeerConnection(msg.fromPeerId);
             await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
             await flushPendingIce(msg.fromPeerId, pc);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            sendWs({ type: 'rtc_answer', targetPeerId: msg.fromPeerId, sdp: pc.localDescription });
+          } else if (msg.type === 'rtc_answer' && msg.fromPeerId && msg.sdp) {
+            const pc = peerConnectionsRef.current.get(msg.fromPeerId);
+            if (pc) {
+              await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+              await flushPendingIce(msg.fromPeerId, pc);
+            }
+          } else if (msg.type === 'rtc_ice' && msg.fromPeerId && msg.candidate) {
+            const pc = peerConnectionsRef.current.get(msg.fromPeerId);
+            if (pc && pc.remoteDescription) {
+              try {
+                await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+              } catch {}
+            } else {
+              const list = pendingIceRef.current.get(msg.fromPeerId) || [];
+              list.push(msg.candidate);
+              pendingIceRef.current.set(msg.fromPeerId, list);
+            }
           }
-        } else if (msg.type === 'rtc_ice' && msg.fromPeerId && msg.candidate) {
-          const pc = peerConnectionsRef.current.get(msg.fromPeerId);
-          if (pc && pc.remoteDescription) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-            } catch {}
-          } else {
-            const list = pendingIceRef.current.get(msg.fromPeerId) || [];
-            list.push(msg.candidate);
-            pendingIceRef.current.set(msg.fromPeerId, list);
-          }
-        }
-      } catch {}
-    };
+        } catch {}
+      };
 
-    ws.onclose = () => setIsRoomConnected(false);
-    ws.onerror = () => setIsRoomConnected(false);
-  }, [
-    trackEngagement,
-    roomCode,
-    collabName,
-    collabRole,
-    micOn,
-    camOn,
-    screenOn,
-    handRaised,
-    logAnalyticsEvent,
-    onRoomCodeChange,
-    showToast,
-    reconcilePeers,
-    closePeerConnection,
-    getOrCreatePeerConnection,
-    flushPendingIce,
-    sendWs,
-  ]);
+      ws.onclose = () => {
+        setIsRoomConnected(false);
+        setRoomJoinState((prev) => (prev === 'denied' ? 'denied' : 'idle'));
+      };
+      ws.onerror = () => {
+        setIsRoomConnected(false);
+        setRoomJoinState((prev) => (prev === 'denied' ? 'denied' : 'idle'));
+      };
+    },
+    [
+      trackEngagement,
+      roomCode,
+      collabName,
+      collabRole,
+      isInviteMode,
+      guestKey,
+      currentUser?.uid,
+      currentUser?.email,
+      micOn,
+      camOn,
+      screenOn,
+      handRaised,
+      logAnalyticsEvent,
+      onRoomCodeChange,
+      showToast,
+      disconnectRoom,
+      reconcilePeers,
+      closePeerConnection,
+      getOrCreatePeerConnection,
+      flushPendingIce,
+      sendWs,
+    ]
+  );
 
-  // If opened directly via a shared invite link (?room=XYZ), pre-fill that room code cleanly while remaining idle until user clicks Join Video Room
+  const handleHostAdmitPeer = (targetClientId: string) => {
+    sendWs({ type: 'host_admit', targetClientId });
+  };
+
+  const handleHostDenyPeer = (targetClientId: string) => {
+    sendWs({ type: 'host_deny', targetClientId });
+  };
+
+  const handleHostRemovePeer = (targetClientId: string) => {
+    sendWs({ type: 'host_remove_participant', targetClientId });
+  };
+
+  const handleHostUnblockDenied = (entryGuestKey: string) => {
+    sendWs({ type: 'host_unblock_denied', guestKey: entryGuestKey });
+  };
+
+  // If opened directly via a shared invite link (?room=XYZ or /join/XYZ), pre-fill code and default to Guest knock mode
   useEffect(() => {
     if (initialRoomCode && autoJoinedInitialRef.current !== initialRoomCode.toUpperCase()) {
       const target = initialRoomCode.toUpperCase();
       autoJoinedInitialRef.current = target;
       setRoomCode(target);
+      setIsInviteMode(true);
+      setCollabRole((prev) => (prev === 'Team Host' ? 'Invited Guest' : prev));
+      setCollabName((prev) => (prev === 'Host' ? currentUser?.displayName || 'Guest' : prev));
       setActiveTab('room');
     }
-  }, [initialRoomCode]);
+  }, [initialRoomCode, currentUser?.displayName]);
 
   useEffect(() => {
     return () => disconnectRoom();
@@ -1210,10 +1461,18 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
         const videoConstraint: MediaTrackConstraints = {
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          ...(selectedVideoDeviceId ? { deviceId: { exact: selectedVideoDeviceId } } : {}),
+          ...(selectedVideoDeviceId
+            ? { deviceId: { exact: selectedVideoDeviceId } }
+            : { facingMode: { ideal: cameraFacingMode } }),
         };
         const videoStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint });
         const track = videoStream.getVideoTracks()[0];
+        const settings = track?.getSettings?.();
+        if (settings?.facingMode === 'user' || settings?.facingMode === 'environment') {
+          setCameraFacingMode(settings.facingMode);
+        }
+        if (settings?.deviceId) setSelectedVideoDeviceId(settings.deviceId);
+
         if (!localStreamRef.current) localStreamRef.current = new MediaStream([track]);
         else localStreamRef.current.addTrack(track);
         setCamOn(true);
@@ -1235,29 +1494,117 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
     refreshLocalPreview();
   };
 
-  const handleSelectVideoDevice = async (deviceId: string) => {
-    setSelectedVideoDeviceId(deviceId);
+  const handleSwitchCameraFacing = async (explicitFacing?: 'user' | 'environment') => {
+    const nextFacing: 'user' | 'environment' =
+      explicitFacing || (cameraFacingMode === 'user' ? 'environment' : 'user');
+    setMediaError(null);
     setDeviceMenuOpen(null);
-    if (!camOn && (!localStreamRef.current || localStreamRef.current.getVideoTracks().length === 0)) return;
+    setCameraFacingMode(nextFacing);
+
+    const hasExistingCam = camOn || Boolean(localStreamRef.current?.getVideoTracks().length);
+    if (!hasExistingCam) return;
+
     try {
-      const nextVideo = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-        },
-      });
-      const newTrack = nextVideo.getVideoTracks()[0];
+      // Release active camera hardware BEFORE opening the rear/front sensor (critical for iOS & Android)
       if (localStreamRef.current) {
         localStreamRef.current.getVideoTracks().forEach((t) => {
           t.stop();
           localStreamRef.current?.removeTrack(t);
         });
+      }
+      await new Promise((r) => window.setTimeout(r, 85));
+
+      let nextVideo: MediaStream;
+      try {
+        nextVideo = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { exact: nextFacing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        });
+      } catch {
+        const matched = videoInputs.find((d) =>
+          nextFacing === 'environment'
+            ? /back|rear|environment|world|trasera/i.test(d.label)
+            : /front|user|facetime|selfie/i.test(d.label)
+        );
+        nextVideo = await navigator.mediaDevices.getUserMedia({
+          video: matched?.deviceId
+            ? { deviceId: { exact: matched.deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+            : { facingMode: { ideal: nextFacing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        });
+      }
+
+      const newTrack = nextVideo.getVideoTracks()[0];
+      if (!newTrack) {
+        throw new Error('No video track returned from camera.');
+      }
+      const settings = newTrack.getSettings?.();
+      if (settings?.deviceId) setSelectedVideoDeviceId(settings.deviceId);
+      if (settings?.facingMode === 'user' || settings?.facingMode === 'environment') {
+        setCameraFacingMode(settings.facingMode);
+      }
+
+      if (localStreamRef.current) {
         localStreamRef.current.addTrack(newTrack);
       } else {
         localStreamRef.current = new MediaStream([newTrack]);
       }
-      newTrack.enabled = camOn;
+      newTrack.enabled = true;
+      setCamOn(true);
+      broadcastMediaState(micOn, true, screenOn);
+      refreshLocalPreview();
+      void refreshMediaDeviceList();
+      await renegotiateAllPeers();
+      showToast(nextFacing === 'environment' ? 'Switched to rear camera.' : 'Switched to front camera.');
+    } catch (err: any) {
+      setMediaError(err?.message || 'Unable to switch front/rear camera on this device.');
+    }
+  };
+
+  const handleSelectVideoDevice = async (deviceId: string) => {
+    setSelectedVideoDeviceId(deviceId);
+    setDeviceMenuOpen(null);
+    const matchedMeta = videoInputs.find((d) => d.deviceId === deviceId);
+    if (matchedMeta && /back|rear|environment|world/i.test(matchedMeta.label)) {
+      setCameraFacingMode('environment');
+    } else if (matchedMeta && /front|user|facetime|selfie/i.test(matchedMeta.label)) {
+      setCameraFacingMode('user');
+    }
+
+    if (!camOn && (!localStreamRef.current || localStreamRef.current.getVideoTracks().length === 0)) return;
+    try {
+      // Stop existing camera track first so mobile OS camera lock is released
+      if (localStreamRef.current) {
+        localStreamRef.current.getVideoTracks().forEach((t) => {
+          t.stop();
+          localStreamRef.current?.removeTrack(t);
+        });
+      }
+      await new Promise((r) => window.setTimeout(r, 85));
+
+      const nextVideo = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: cameraFacingMode } }),
+        },
+      });
+      const newTrack = nextVideo.getVideoTracks()[0];
+      const settings = newTrack?.getSettings?.();
+      if (settings?.facingMode === 'user' || settings?.facingMode === 'environment') {
+        setCameraFacingMode(settings.facingMode);
+      }
+
+      if (localStreamRef.current) {
+        localStreamRef.current.addTrack(newTrack);
+      } else {
+        localStreamRef.current = new MediaStream([newTrack]);
+      }
+      newTrack.enabled = true;
+      setCamOn(true);
+      broadcastMediaState(micOn, true, screenOn);
       refreshLocalPreview();
       await renegotiateAllPeers();
     } catch (err: any) {
@@ -1365,7 +1712,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
 
   const meetingShareUrl =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/workspace/vision?room=${encodeURIComponent(roomCode.trim().toUpperCase())}`
+      ? `${window.location.origin}/?room=${encodeURIComponent(roomCode.trim().toUpperCase())}`
       : '';
 
   const handleCopyRoomCode = async () => {
@@ -1380,7 +1727,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
   const handleCopyMeetingLink = async () => {
     try {
       await navigator.clipboard.writeText(meetingShareUrl);
-      showToast('Meeting link copied. Anyone opening it joins straight into this room.');
+      showToast('Invite link copied. Guests will confirm the room code and ask permission to join.');
     } catch {
       showToast(`Meeting link: ${meetingShareUrl}`);
     }
@@ -1388,8 +1735,9 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
 
   const handleNewSessionRoom = () => {
     const nextCode = generateUniqueSessionCode();
-    disconnectRoom();
+    disconnectRoom(false);
     setRoomCode(nextCode);
+    setIsInviteMode(false);
     onRoomCodeChange?.(nextCode);
     showToast(`Created fresh meeting session ${nextCode}.`);
   };
@@ -1450,29 +1798,59 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
     }
   };
 
-  const handleGenerateSlides = async () => {
-    if (!slidePrompt.trim()) return;
+  const handleOpenSlideConfigurator = () => {
+    if (!slidePrompt.trim()) {
+      setSlideError('Describe your financial presentation topic first.');
+      return;
+    }
+    setSlideError(null);
+    setConfigStep(1);
+    setIsSlideConfigOpen(true);
+  };
+
+  const handleGenerateSlides = async (overrideCount?: number) => {
+    const cleanTopic = slidePrompt.trim();
+    if (!cleanTopic) {
+      setSlideError('Enter a financial topic before generating slides.');
+      return;
+    }
     if (!trackEngagement('Slide Deck Creator')) return;
+    const requestedCount = Math.max(4, Math.min(15, Number(overrideCount ?? slideCount) || 6));
     setGeneratingSlides(true);
     setSlideError(null);
     try {
       const resp = await fetch('/api/gemini/vision-slides', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: slidePrompt.trim(), theme: deckTheme }),
+        body: JSON.stringify({
+          topic: cleanTopic,
+          theme: deckTheme,
+          slideCount: requestedCount,
+          fontStyle: slideFontStyle,
+          contentStyle: slideContentStyle,
+          graphicsStyle: slideGraphicsStyle,
+          audience: deckAudience,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok || !Array.isArray(data.slides)) {
         throw new Error(data.error || 'Could not generate slides right now.');
       }
       if (data.title) setBoardTitle(data.title);
-      const themed = data.slides.map((s: SlideItem) => ({ ...s, theme: s.theme || deckTheme }));
+      const themed: SlideItem[] = data.slides.slice(0, requestedCount).map((s: SlideItem) => ({
+        ...s,
+        theme: s.theme || deckTheme,
+        fontStyle: s.fontStyle || slideFontStyle,
+        contentStyle: s.contentStyle || slideContentStyle,
+        graphicsStyle: s.graphicsStyle || slideGraphicsStyle,
+      }));
       setSlides(themed);
       setActiveSlideId(themed[0]?.id || '');
       setHasSlidesOutput(true);
+      setIsSlideConfigOpen(false);
       broadcastSlides(themed);
-      logAnalyticsEvent('vision_collab', 'vision', `ai_slides:${slidePrompt.slice(0, 40)}`);
-      showToast('Created presentation slide deck.');
+      logAnalyticsEvent('vision_collab', 'vision', `ai_slides:${themed.length}:${cleanTopic.slice(0, 40)}`);
+      showToast(`Generated ${themed.length} financial slides.`);
     } catch (err: any) {
       setSlideError(err?.message || 'Unable to generate presentation slides right now.');
     } finally {
@@ -1558,187 +1936,242 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
     setSlides(DEFAULT_SLIDES);
     setActiveSlideId(DEFAULT_SLIDES[0].id);
     setHasSlidesOutput(false);
-    setSlideExportMenuOpen(false);
     showToast('Deleted presentation deck.');
   };
 
-  // ================= PER-TAB ISOLATED EXPORTS =================
-  // Slide Deck ONLY HTML Print/PDF builder (never includes Mind Map nodes)
+  // ================= PER-TAB ISOLATED EXPORTS (.html ONLY) =================
   const buildSlidesDocumentHtml = () => {
     const slidesHtml = slides
       .map((s, idx) => {
-        const t = SLIDE_THEMES[s.theme || deckTheme] || SLIDE_THEMES.midnight;
-        const isLight = (s.theme || deckTheme) === 'ivory';
-        const bgHex = `#${t.pptxBg}`;
-        const textHex = `#${t.pptxText}`;
-        const accentHex = `#${t.pptxAccent}`;
-        const cardHex = `#${t.pptxCard}`;
+        const t = SLIDE_THEMES[s.theme || deckTheme] || SLIDE_THEMES.ivory;
+        const fontSpec = SLIDE_FONTS[s.fontStyle || slideFontStyle] || SLIDE_FONTS.swiss_sans;
+        const bullets = (s.bullets || []).filter(Boolean);
+        const bars = Array.isArray(s.chartBars) && s.chartBars.length > 0 ? s.chartBars.slice(0, 5) : [];
+        const maxBarVal = Math.max(1, ...bars.map((b) => Number(b.value) || 0));
+        const chartHtml = bars.length
+          ? `<div class="chart-box" style="background:${t.cardHex};border-color:${t.borderHex}">
+              <div class="chart-caption" style="color:${t.mutedHex}">Quantitative Breakdown</div>
+              <div class="bar-list">
+                ${bars
+                  .map((bar) => {
+                    const pct = Math.max(12, Math.min(100, Math.round(((Number(bar.value) || 0) / maxBarVal) * 100)));
+                    return `<div class="bar-row">
+                      <div class="bar-meta"><span>${escapeHtmlText(bar.label)}</span><span style="color:${t.accentHex}">${escapeHtmlText(String(bar.value))}${escapeHtmlText(bar.unit || '')}</span></div>
+                      <div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${t.accentHex}"></div></div>
+                    </div>`;
+                  })
+                  .join('')}
+              </div>
+            </div>`
+          : '';
         return `
-          <section class="slide" style="background:${bgHex};color:${textHex};border-color:${isLight ? '#e5e7eb' : 'rgba(255,255,255,0.12)'}">
-            <div class="meta" style="color:${accentHex}">${escapeHtmlText(boardTitle)} &bull; Slide ${idx + 1} of ${slides.length}</div>
-            <h2>${escapeHtmlText(s.title || 'Untitled Slide')}</h2>
-            ${s.subtitle ? `<p class="subtitle" style="color:${accentHex}">${escapeHtmlText(s.subtitle)}</p>` : ''}
-            <div class="slide-body">
-              <ul>
-                ${(s.bullets || []).filter(Boolean).map((b) => `<li>${escapeHtmlText(b)}</li>`).join('')}
-              </ul>
-              ${
-                s.metricHighlight
-                  ? `<div class="metric" style="background:${cardHex};border:1px solid ${accentHex};color:${textHex}">${escapeHtmlText(s.metricHighlight)}</div>`
-                  : ''
-              }
+          <section class="deck-slide${idx === 0 ? ' is-active' : ''}" data-index="${idx}" style="background:${t.bgHex};color:${t.textHex};border-color:${t.borderHex};font-family:${fontSpec.cssFamily}">
+            <div class="slide-head">
+              <span class="slide-kicker" style="color:${t.accentHex}">${escapeHtmlText(boardTitle)}</span>
+              <span class="slide-count" style="color:${t.mutedHex}">${String(idx + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}</span>
+            </div>
+            <div class="slide-main">
+              <div class="slide-copy">
+                <h2>${escapeHtmlText(s.title || 'Untitled Slide')}</h2>
+                ${s.subtitle ? `<p class="slide-subtitle" style="color:${t.mutedHex}">${escapeHtmlText(s.subtitle)}</p>` : ''}
+                <div class="card-grid">
+                  ${bullets
+                    .map(
+                      (b, bi) => `
+                    <div class="swiss-card" style="background:${t.cardHex};border-color:${t.borderHex}">
+                      <span class="card-num" style="color:${t.accentHex}">0${bi + 1}</span>
+                      <p>${escapeHtmlText(b)}</p>
+                    </div>`
+                    )
+                    .join('')}
+                </div>
+              </div>
+              <div class="side-panels">
+                ${
+                  s.metricHighlight
+                    ? `<aside class="metric-panel" style="background:${t.cardHex};border-color:${t.borderHex}">
+                        <span class="metric-label" style="color:${t.mutedHex}">Key Figure</span>
+                        <div class="metric-value" style="color:${t.accentHex}">${escapeHtmlText(s.metricHighlight)}</div>
+                      </aside>`
+                    : ''
+                }
+                ${chartHtml}
+              </div>
+            </div>
+            <div class="slide-foot" style="color:${t.mutedHex};border-color:${t.borderHex}">
+              <span>${escapeHtmlText(currentUser?.displayName || collabName || 'Workspace Member')}</span>
+              <span>${escapeHtmlText(t.label)} · ${escapeHtmlText(fontSpec.label)}</span>
             </div>
           </section>`;
       })
       .join('\n');
 
     return `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>${escapeHtmlText(boardTitle)} — Presentation Deck</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtmlText(boardTitle || 'Financial Presentation')} — Interactive HTML Deck</title>
   <style>
-    @page { size: landscape; margin: 12mm; }
     * { box-sizing: border-box; }
-    body { margin: 0; padding: 18px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0f172a; background: #f8fafc; }
-    .slide {
-      border-radius: 16px;
-      padding: 30px 36px;
-      margin-bottom: 18px;
-      page-break-after: always;
-      min-height: 145mm;
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ${(SLIDE_FONTS[slideFontStyle] || SLIDE_FONTS.swiss_sans).cssFamily};
+      background: #F4F4F5;
+      color: #111111;
       display: flex;
       flex-direction: column;
-      border: 1px solid #e2e8f0;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px 84px;
     }
-    .meta { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; margin-bottom: 12px; }
-    h2 { font-size: 28px; margin: 0 0 8px; }
-    .subtitle { font-size: 15px; margin: 0 0 22px; font-weight: 500; }
-    .slide-body { display: flex; gap: 24px; align-items: center; flex: 1; }
-    ul { margin: 0; padding-left: 20px; font-size: 16px; line-height: 1.65; flex: 1; }
-    .metric { min-width: 185px; padding: 22px; border-radius: 14px; text-align: center; font-size: 22px; font-weight: 800; }
+    .deck-viewport { width: 100%; max-width: 1080px; }
+    .deck-slide {
+      display: none;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      min-height: 460px;
+      border-radius: 20px;
+      border: 1px solid #E5E5E5;
+      padding: clamp(24px, 4vw, 48px);
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.06);
+    }
+    .deck-slide.is-active { display: flex; }
+    .slide-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; font-weight: 700; }
+    .slide-main { display: grid; grid-template-columns: 1fr; gap: 24px; margin: auto 0; align-items: center; }
+    @media (min-width: 780px) { .slide-main { grid-template-columns: 1fr auto; } }
+    h2 { font-size: clamp(24px, 3.2vw, 38px); line-height: 1.12; letter-spacing: -0.025em; margin: 0 0 10px; font-weight: 800; }
+    .slide-subtitle { font-size: 15px; line-height: 1.5; margin: 0 0 22px; max-width: 680px; }
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .swiss-card { border-radius: 14px; border: 1px solid #E5E5E5; padding: 14px 16px; }
+    .card-num { display: block; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; margin-bottom: 6px; }
+    .swiss-card p { margin: 0; font-size: 13.5px; line-height: 1.45; font-weight: 500; }
+    .metric-panel { min-width: 220px; border-radius: 16px; border: 1px solid #E5E5E5; padding: 20px; text-align: left; }
+    .metric-label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600; margin-bottom: 8px; }
+    .metric-value { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; }
+    .side-panels { display: flex; flex-direction: column; gap: 12px; min-width: 225px; }
+    .chart-box { border-radius: 16px; border: 1px solid #E5E5E5; padding: 14px 16px; }
+    .chart-caption { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; margin-bottom: 10px; font-family: ui-monospace, Menlo, monospace; }
+    .bar-list { display: flex; flex-direction: column; gap: 8px; }
+    .bar-meta { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; margin-bottom: 3px; }
+    .bar-track { width: 100%; height: 6px; border-radius: 999px; background: rgba(120,120,140,0.16); overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 999px; }
+    .slide-foot { display: flex; justify-content: space-between; font-size: 11px; padding-top: 14px; border-top: 1px solid #E5E5E5; }
+    .controls {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 12px;
+      background: #111111; color: #FFFFFF; padding: 8px 14px; border-radius: 14px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.18); font-size: 12px;
+    }
+    .controls button {
+      background: rgba(255,255,255,0.14); border: none; color: #FFFFFF;
+      padding: 6px 12px; border-radius: 9px; font-weight: 600; cursor: pointer;
+    }
+    .controls button:hover { background: rgba(255,255,255,0.24); }
+    @media print {
+      body { background: #FFFFFF; padding: 0; }
+      .controls { display: none; }
+      .deck-slide { display: flex !important; box-shadow: none; page-break-after: always; margin-bottom: 16px; }
+    }
   </style>
 </head>
 <body>
-  ${slidesHtml}
+  <main class="deck-viewport" id="deck">${slidesHtml}</main>
+  <nav class="controls" aria-label="Slide controls">
+    <button type="button" id="prevBtn">Prev</button>
+    <span id="pager">1 / ${slides.length}</span>
+    <button type="button" id="nextBtn">Next</button>
+  </nav>
+  <script>
+    (function () {
+      var slides = Array.prototype.slice.call(document.querySelectorAll('.deck-slide'));
+      var idx = 0;
+      var pager = document.getElementById('pager');
+      function show(n) {
+        idx = Math.max(0, Math.min(slides.length - 1, n));
+        slides.forEach(function (el, i) { el.classList.toggle('is-active', i === idx); });
+        if (pager) pager.textContent = (idx + 1) + ' / ' + slides.length;
+      }
+      document.getElementById('prevBtn').addEventListener('click', function () { show(idx - 1); });
+      document.getElementById('nextBtn').addEventListener('click', function () { show(idx + 1); });
+      window.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowRight' || e.key === ' ') show(idx + 1);
+        if (e.key === 'ArrowLeft') show(idx - 1);
+      });
+      var touchX = null;
+      document.getElementById('deck').addEventListener('touchstart', function (e) {
+        touchX = e.touches && e.touches[0] ? e.touches[0].clientX : null;
+      }, { passive: true });
+      document.getElementById('deck').addEventListener('touchend', function (e) {
+        if (touchX === null || !e.changedTouches || !e.changedTouches[0]) return;
+        var dx = e.changedTouches[0].clientX - touchX;
+        touchX = null;
+        if (Math.abs(dx) > 45) show(dx < 0 ? idx + 1 : idx - 1);
+      }, { passive: true });
+    })();
+  </script>
 </body>
 </html>`;
   };
 
-  const handleExportPptx = async () => {
+  const handleDownloadSlidesHtml = () => {
+    setSlideExportMenuOpen(false);
+    const safeName = (boardTitle || 'presentation').replace(/[^a-zA-Z0-9_-]/g, '-');
+    triggerFileDownload(buildSlidesDocumentHtml(), `${safeName}-presentation.html`, 'text/html');
+    logAnalyticsEvent('vision_collab', 'vision', `export_html:${slides.length}_slides`);
+    showToast('Downloaded interactive HTML presentation (.html).');
+  };
+
+  const handleDownloadSlidesPdf = () => {
+    setSlideExportMenuOpen(false);
+    exportSlidesAsPdf(
+      slides,
+      boardTitle,
+      deckTheme,
+      slideFontStyle,
+      SLIDE_THEMES,
+      currentUser?.displayName || collabName || 'Workspace Member'
+    );
+    logAnalyticsEvent('vision_collab', 'vision', `export_pdf:${slides.length}_slides`);
+    showToast('Downloaded widescreen PDF deck (.pdf).');
+  };
+
+  const handleDownloadSlidesPptx = async () => {
     setSlideExportMenuOpen(false);
     setExportingPptx(true);
     try {
-      const pres = new PptxGenJS();
-      pres.layout = 'LAYOUT_16X9';
-      pres.title = boardTitle || 'Liddy Presentation';
-      pres.author = currentUser?.displayName || collabName || 'Liddy Member';
-
-      slides.forEach((s, idx) => {
-        const slide = pres.addSlide();
-        const t = SLIDE_THEMES[s.theme || deckTheme] || SLIDE_THEMES.midnight;
-        slide.background = { color: t.pptxBg };
-
-        slide.addShape(pres.ShapeType.rect, {
-          x: 0,
-          y: 0,
-          w: 10,
-          h: 0.14,
-          fill: { color: t.pptxAccent },
-        });
-
-        slide.addText(`${(boardTitle || 'STRATEGY').toUpperCase()}  |  SLIDE ${idx + 1}`, {
-          x: 0.65,
-          y: 0.35,
-          w: 8.7,
-          h: 0.35,
-          fontSize: 10,
-          color: t.pptxAccent,
-          bold: true,
-        });
-
-        slide.addText(s.title || 'Untitled Slide', {
-          x: 0.65,
-          y: 0.85,
-          w: 8.7,
-          h: 0.85,
-          fontSize: s.layout === 'cover' ? 30 : 24,
-          bold: true,
-          color: t.pptxText,
-        });
-
-        if (s.subtitle) {
-          slide.addText(s.subtitle, {
-            x: 0.65,
-            y: 1.68,
-            w: 8.5,
-            h: 0.45,
-            fontSize: 14,
-            color: t.pptxAccent,
-          });
-        }
-
-        if (s.metricHighlight) {
-          slide.addShape(pres.ShapeType.roundRect, {
-            x: 6.45,
-            y: 2.3,
-            w: 2.9,
-            h: 2.0,
-            fill: { color: t.pptxCard },
-            line: { color: t.pptxAccent, width: 1.5 },
-          });
-          slide.addText(s.metricHighlight, {
-            x: 6.6,
-            y: 2.95,
-            w: 2.6,
-            h: 0.85,
-            fontSize: 21,
-            bold: true,
-            color: t.pptxText,
-            align: 'center',
-          });
-        }
-
-        const bulletW = s.metricHighlight ? 5.5 : 8.7;
-        const bulletRows = (s.bullets || [])
-          .filter(Boolean)
-          .map((b) => ({
-            text: b,
-            options: {
-              bullet: { code: '2022' },
-              color: t.pptxText,
-              fontSize: 15,
-              breakLine: true,
-              paraSpaceAfter: 12,
-            },
-          }));
-
-        if (bulletRows.length > 0) {
-          slide.addText(bulletRows as any, {
-            x: 0.65,
-            y: 2.35,
-            w: bulletW,
-            h: 2.7,
-            valign: 'top',
-          });
-        }
-      });
-
-      const safeFilename = (boardTitle || 'Liddy-Presentation').replace(/[^a-zA-Z0-9_-]/g, '-');
-      await pres.writeFile({ fileName: `${safeFilename}.pptx` });
+      await exportSlidesAsPptx(
+        slides,
+        boardTitle,
+        deckTheme,
+        slideFontStyle,
+        SLIDE_THEMES,
+        currentUser?.displayName || collabName || 'Workspace Member'
+      );
       logAnalyticsEvent('vision_collab', 'vision', `export_pptx:${slides.length}_slides`);
-      showToast('Downloaded PowerPoint deck.');
-    } catch (err: any) {
-      showToast(err?.message || 'Unable to export PowerPoint right now.');
+      showToast('Downloaded PowerPoint deck (.pptx).');
+    } catch {
+      showToast('Could not compile PowerPoint export. Try PDF or HTML.');
     } finally {
       setExportingPptx(false);
     }
   };
 
-  const handleOpenSlidesPrintPreview = () => {
+  const handleDownloadSlidesMarkdown = () => {
     setSlideExportMenuOpen(false);
-    setPrintPreviewHtml(buildSlidesDocumentHtml());
-    logAnalyticsEvent('vision_collab', 'vision', `export_pdf_preview:${slides.length}`);
+    exportSlidesAsMarkdown(slides, boardTitle);
+    logAnalyticsEvent('vision_collab', 'vision', `export_md:${slides.length}_slides`);
+    showToast('Downloaded presentation outline (.md).');
+  };
+
+  const handleDownloadSlidesJson = () => {
+    setSlideExportMenuOpen(false);
+    exportSlidesAsJson(slides, boardTitle, deckTheme, slideFontStyle);
+    logAnalyticsEvent('vision_collab', 'vision', `export_json:${slides.length}_slides`);
+    showToast('Downloaded structured deck JSON (.json).');
   };
 
   // Mind Map ONLY Vector SVG Export (Dynamic bounding box so stretched nodes never clip)
@@ -2009,7 +2442,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
 
   // ================= SLIDE OPERATIONS =================
   const activeSlide = slides.find((s) => s.id === activeSlideId) || slides[0];
-  const currentThemeSpec = SLIDE_THEMES[activeSlide?.theme || deckTheme] || SLIDE_THEMES.midnight;
+  const currentThemeSpec = SLIDE_THEMES[activeSlide?.theme || deckTheme] || SLIDE_THEMES.ivory;
 
   const updateActiveSlide = (patch: Partial<SlideItem>) => {
     if (!activeSlide) return;
@@ -2225,7 +2658,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
               Vision Studio
             </h1>
             <p className="text-xs sm:text-sm text-neutral-500 dark:text-neutral-400 font-normal leading-relaxed max-w-xl">
-              Map ideas freely on an expandable canvas, build structured slide decks, host live team rooms and create concept visuals.
+              Map wealth roadmaps, build financial slide decks with exact card counts, host live team reviews and visualize financial goals.
             </p>
           </div>
 
@@ -2907,36 +3340,39 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
         </div>
       )}
 
-      {/* ================= TAB 2: EXPRESSIVE SLIDE DECK CREATOR ================= */}
+      {/* ================= TAB 2: GAMMA-INSPIRED FINANCIAL PRESENTATION STUDIO (.HTML ONLY) ================= */}
       {activeTab === 'slides' && (
         <div className="space-y-5">
-          {/* Prompt Bar */}
-          <div className="rounded-3xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-neutral-900/90 p-5 space-y-3 shadow-xs">
+          {/* Prompt Bar & Configurator Trigger */}
+          <div className="rounded-3xl border border-[#E5E5E5] dark:border-white/10 bg-white dark:bg-neutral-900/90 p-5 space-y-4 shadow-xs">
             <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
               <input
                 type="text"
                 value={slidePrompt}
-                onChange={(e) => setSlidePrompt(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleGenerateSlides()}
-                placeholder="Describe your presentation topic, story or key points to build slides..."
-                className="flex-1 bg-neutral-50 dark:bg-neutral-950 border border-neutral-200/90 dark:border-neutral-800 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                onChange={(e) => {
+                  setSlidePrompt(e.target.value);
+                  if (slideError) setSlideError(null);
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && handleOpenSlideConfigurator()}
+                placeholder="Describe your financial presentation (e.g. Q4 portfolio performance, savings plan, debt payoff)..."
+                className="flex-1 bg-[#FAFAFA] dark:bg-neutral-950 border border-[#E5E5E5] dark:border-neutral-800 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-neutral-900 dark:focus:ring-white"
               />
               <div className="flex flex-wrap gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={handleEnhanceSlidePrompt}
                   disabled={enhancingSlides || !slidePrompt.trim()}
-                  className="px-4 py-3 rounded-2xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-xs font-bold cursor-pointer disabled:opacity-40"
+                  className="px-4 py-3 rounded-2xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-xs font-semibold cursor-pointer disabled:opacity-40 whitespace-nowrap"
                 >
-                  {enhancingSlides ? 'Enhancing...' : 'Enhance Prompt'}
+                  {enhancingSlides ? 'Refining...' : 'Refine Topic'}
                 </button>
                 <button
                   type="button"
-                  onClick={handleGenerateSlides}
+                  onClick={handleOpenSlideConfigurator}
                   disabled={generatingSlides || !slidePrompt.trim()}
-                  className="px-5 py-3 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+                  className="px-5 py-3 rounded-2xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
                 >
-                  {generatingSlides ? 'Designing Slides...' : 'Build Slide Deck'}
+                  Configure &amp; Build ({slideCount} Slides)
                 </button>
               </div>
             </div>
@@ -2947,8 +3383,11 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   <button
                     key={idea}
                     type="button"
-                    onClick={() => setSlidePrompt(idea)}
-                    className="text-xs px-3 py-1 rounded-xl bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 hover:border-indigo-400 cursor-pointer"
+                    onClick={() => {
+                      setSlidePrompt(idea);
+                      setSlideError(null);
+                    }}
+                    className="text-xs px-3 py-1.5 rounded-xl bg-[#FAFAFA] dark:bg-neutral-950 border border-[#E5E5E5] dark:border-neutral-800 hover:border-neutral-900 dark:hover:border-white cursor-pointer text-left"
                   >
                     {idea}
                   </button>
@@ -2956,22 +3395,13 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-1.5">
-                  {(Object.keys(SLIDE_THEMES) as SlideTheme[]).map((themeKey) => (
-                    <button
-                      key={themeKey}
-                      type="button"
-                      onClick={() => applyThemeToDeck(themeKey)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer border transition-colors ${
-                        (activeSlide?.theme || deckTheme) === themeKey
-                          ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 border-neutral-900 dark:border-white'
-                          : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 border-transparent'
-                      }`}
-                    >
-                      {SLIDE_THEMES[themeKey].label.split(' ')[0]}
-                    </button>
-                  ))}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSlideConfigOpen((prev) => !prev)}
+                  className="px-3 py-1.5 rounded-lg border border-[#E5E5E5] dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[11px] font-bold cursor-pointer whitespace-nowrap"
+                >
+                  {isSlideConfigOpen ? 'Hide Deck Setup' : `Deck Options · ${slideCount} Slides · ${SLIDE_THEMES[deckTheme].label}`}
+                </button>
                 {savedBoards.length > 0 && (
                   <select
                     value=""
@@ -2980,7 +3410,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                       if (match) handleLoadBoard(match, 'slides');
                     }}
                     aria-label="Open saved slide deck"
-                    className="px-2.5 py-1 rounded-lg bg-neutral-50 dark:bg-neutral-950 border border-neutral-200 dark:border-neutral-800 text-[11px] font-semibold outline-none max-w-[160px]"
+                    className="px-2.5 py-1.5 rounded-lg bg-[#FAFAFA] dark:bg-neutral-950 border border-[#E5E5E5] dark:border-neutral-800 text-[11px] font-semibold outline-none max-w-[160px]"
                   >
                     <option value="">Open Saved ({savedBoards.length})</option>
                     {savedBoards.map((b) => (
@@ -2994,13 +3424,253 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   <button
                     type="button"
                     onClick={() => setHasSlidesOutput(true)}
-                    className="px-2.5 py-1 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[11px] font-semibold cursor-pointer"
+                    className="px-3 py-1.5 rounded-lg border border-[#E5E5E5] dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[11px] font-semibold cursor-pointer"
                   >
                     Starter Deck
                   </button>
                 )}
               </div>
             </div>
+
+            {/* Interactive Step-by-Step Financial Deck Configurator */}
+            {isSlideConfigOpen && (
+              <div className="mt-2 p-5 rounded-2xl bg-[#FAFAFA] dark:bg-neutral-950 border border-[#E5E5E5] dark:border-neutral-800 space-y-5 animate-enter">
+                <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#E5E5E5] dark:border-neutral-800">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {[
+                      { step: 1 as const, label: '1. Slides & Audience' },
+                      { step: 2 as const, label: '2. Financial Theme & Font' },
+                      { step: 3 as const, label: '3. Density & Visuals' },
+                    ].map((st) => (
+                      <button
+                        key={st.step}
+                        type="button"
+                        onClick={() => setConfigStep(st.step)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                          configStep === st.step
+                            ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950'
+                            : 'bg-white dark:bg-neutral-900 border border-[#E5E5E5] dark:border-neutral-800 text-neutral-600 dark:text-neutral-300'
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="text-[11px] font-mono text-neutral-500">
+                    Exact count: <strong className="text-neutral-900 dark:text-white">{slideCount} slides</strong>
+                  </span>
+                </div>
+
+                {configStep === 1 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="space-y-2.5">
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 font-bold">
+                        How Many Slides? (Exact Guarantee)
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {SLIDE_COUNT_PRESETS.map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            onClick={() => setSlideCount(n)}
+                            className={`px-3.5 py-2 rounded-xl text-xs font-mono font-bold cursor-pointer border transition-colors ${
+                              slideCount === n
+                                ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 border-neutral-900 dark:border-white'
+                                : 'bg-white dark:bg-neutral-900 border-[#E5E5E5] dark:border-neutral-800 text-neutral-700 dark:text-neutral-300'
+                            }`}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                        <div className="flex items-center gap-1.5 ml-1">
+                          <input
+                            type="number"
+                            min={4}
+                            max={15}
+                            value={slideCount}
+                            onChange={(e) =>
+                              setSlideCount(Math.max(4, Math.min(15, Number(e.target.value) || 6)))
+                            }
+                            aria-label="Exact number of slides"
+                            className="w-16 px-2.5 py-1.5 rounded-xl bg-white dark:bg-neutral-900 border border-[#E5E5E5] dark:border-neutral-800 text-xs font-mono font-bold text-center"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 font-bold">
+                        Financial Audience
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {SLIDE_AUDIENCE_PRESETS.map((aud) => (
+                          <button
+                            key={aud}
+                            type="button"
+                            onClick={() => setDeckAudience(aud)}
+                            className={`px-3 py-2 rounded-xl text-xs font-semibold text-left cursor-pointer border transition-colors ${
+                              deckAudience === aud
+                                ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 border-neutral-900 dark:border-white'
+                                : 'bg-white dark:bg-neutral-900 border-[#E5E5E5] dark:border-neutral-800 text-neutral-700 dark:text-neutral-300'
+                            }`}
+                          >
+                            {aud}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {configStep === 2 && (
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 font-bold mb-2">
+                        Financial Design Theme Library (8 Palettes)
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        {(Object.keys(SLIDE_THEMES) as SlideTheme[]).map((themeKey) => {
+                          const tSpec = SLIDE_THEMES[themeKey];
+                          const active = deckTheme === themeKey;
+                          return (
+                            <button
+                              key={themeKey}
+                              type="button"
+                              onClick={() => applyThemeToDeck(themeKey)}
+                              className={`p-3 rounded-xl border text-left cursor-pointer transition-all space-y-2 ${
+                                active
+                                  ? 'border-neutral-900 dark:border-white ring-1 ring-neutral-900 dark:ring-white'
+                                  : 'border-[#E5E5E5] dark:border-neutral-800'
+                              }`}
+                              style={{ backgroundColor: tSpec.bgHex, color: tSpec.textHex }}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span
+                                  className="w-5 h-1.5 rounded-full"
+                                  style={{ backgroundColor: tSpec.accentHex }}
+                                />
+                                {active && <span className="text-[10px] font-mono font-bold">Active</span>}
+                              </div>
+                              <div className="text-xs font-bold leading-tight">{tSpec.label}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 font-bold mb-2">
+                        Typography Pairing
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        {(Object.keys(SLIDE_FONTS) as SlideFontStyle[]).map((fk) => {
+                          const fs = SLIDE_FONTS[fk];
+                          return (
+                            <button
+                              key={fk}
+                              type="button"
+                              onClick={() => setSlideFontStyle(fk)}
+                              className={`p-3 rounded-xl border text-left cursor-pointer transition-colors ${
+                                slideFontStyle === fk
+                                  ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 border-neutral-900 dark:border-white'
+                                  : 'bg-white dark:bg-neutral-900 border-[#E5E5E5] dark:border-neutral-800 text-neutral-800 dark:text-neutral-200'
+                              }`}
+                            >
+                              <div className="text-xs font-bold" style={{ fontFamily: fs.cssFamily }}>
+                                {fs.label}
+                              </div>
+                              <div className="text-[10px] opacity-70 mt-0.5">{fs.sample}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {configStep === 3 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 font-bold">
+                        Slide Text Density
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {SLIDE_CONTENT_DENSITY.map((cd) => (
+                          <button
+                            key={cd.id}
+                            type="button"
+                            onClick={() => setSlideContentStyle(cd.id)}
+                            className={`p-3 rounded-xl border text-left cursor-pointer transition-colors ${
+                              slideContentStyle === cd.id
+                                ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 border-neutral-900 dark:border-white'
+                                : 'bg-white dark:bg-neutral-900 border-[#E5E5E5] dark:border-neutral-800 text-neutral-800 dark:text-neutral-200'
+                            }`}
+                          >
+                            <div className="text-xs font-bold">{cd.label}</div>
+                            <div className="text-[10px] opacity-75 mt-0.5 leading-snug">{cd.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-500 font-bold">
+                        Financial Visuals Style
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {SLIDE_GRAPHICS_OPTIONS.map((gr) => (
+                          <button
+                            key={gr.id}
+                            type="button"
+                            onClick={() => setSlideGraphicsStyle(gr.id)}
+                            className={`p-3 rounded-xl border text-left cursor-pointer transition-colors ${
+                              slideGraphicsStyle === gr.id
+                                ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 border-neutral-900 dark:border-white'
+                                : 'bg-white dark:bg-neutral-900 border-[#E5E5E5] dark:border-neutral-800 text-neutral-800 dark:text-neutral-200'
+                            }`}
+                          >
+                            <div className="text-xs font-bold">{gr.label}</div>
+                            <div className="text-[10px] opacity-75 mt-0.5 leading-snug">{gr.desc}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="pt-3 border-t border-[#E5E5E5] dark:border-neutral-800 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    {configStep > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setConfigStep((prev) => (prev === 3 ? 2 : 1))}
+                        className="px-3.5 py-2 rounded-xl border border-[#E5E5E5] dark:border-neutral-700 text-xs font-semibold cursor-pointer"
+                      >
+                        &larr; Back
+                      </button>
+                    )}
+                    {configStep < 3 && (
+                      <button
+                        type="button"
+                        onClick={() => setConfigStep((prev) => (prev === 1 ? 2 : 3))}
+                        className="px-4 py-2 rounded-xl bg-neutral-200 dark:bg-neutral-800 text-xs font-bold cursor-pointer"
+                      >
+                        Next Step &rarr;
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleGenerateSlides(slideCount)}
+                    disabled={generatingSlides || !slidePrompt.trim()}
+                    className="px-5 py-2.5 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer disabled:opacity-50"
+                  >
+                    {generatingSlides ? `Building ${slideCount} Slides...` : `Generate ${slideCount} Financial Slides`}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {slideError && (
               <div className="px-3.5 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-200 text-xs font-semibold">
@@ -3011,21 +3681,21 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
 
           {hasSlidesOutput && (
             <div className="space-y-4 animate-enter">
-              {/* Isolated Slide Deck Export, Save & Delete Action Bar */}
-              <div className="rounded-2xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-neutral-900 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+              {/* Clean Swiss Deck Action Bar — Multi-Format Presentation Exports */}
+              <div className="rounded-2xl border border-[#E5E5E5] dark:border-white/10 bg-white dark:bg-neutral-900 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
                 <input
                   type="text"
                   value={boardTitle}
                   onChange={(e) => setBoardTitle(e.target.value)}
                   aria-label="Presentation title"
-                  className="bg-transparent text-base font-extrabold tracking-tight text-neutral-900 dark:text-white border-b border-transparent focus:border-indigo-500 outline-none px-1 py-0.5 flex-1 min-w-[180px] max-w-md"
+                  className="bg-transparent text-base font-bold tracking-tight text-neutral-900 dark:text-white border-b border-transparent focus:border-neutral-900 dark:focus:border-white outline-none px-1 py-0.5 flex-1 min-w-[180px] max-w-md"
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={handleSaveBoard}
                     disabled={savingBoard}
-                    className="px-3.5 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:border-indigo-500 text-xs font-bold cursor-pointer disabled:opacity-50"
+                    className="px-3.5 py-2 rounded-xl border border-[#E5E5E5] dark:border-neutral-700 hover:border-neutral-900 text-xs font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
                   >
                     {savingBoard ? 'Saving...' : 'Save Deck'}
                   </button>
@@ -3034,28 +3704,54 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                     <button
                       type="button"
                       onClick={() => setSlideExportMenuOpen((p) => !p)}
-                      className="px-4 py-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer flex items-center gap-1.5"
+                      disabled={exportingPptx}
+                      className="px-4 py-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer hover:opacity-90 flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
                     >
-                      <span>{exportingPptx ? 'Building...' : 'Download Presentation'}</span>
+                      <span>{exportingPptx ? 'Exporting PPTX...' : 'Download Deck'}</span>
                       <span className="text-[10px]">&#9662;</span>
                     </button>
+
                     {slideExportMenuOpen && (
-                      <div className="absolute right-0 mt-2 w-56 rounded-2xl bg-white dark:bg-[#16171F] border border-neutral-200 dark:border-white/15 shadow-2xl p-1.5 z-50 space-y-1">
+                      <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-white dark:bg-[#16171F] border border-neutral-200 dark:border-white/15 shadow-2xl p-1.5 z-50 space-y-1">
                         <button
                           type="button"
-                          onClick={handleExportPptx}
+                          onClick={handleDownloadSlidesPdf}
                           className="w-full text-left px-3 py-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/10 cursor-pointer"
                         >
-                          <p className="text-xs font-bold text-neutral-900 dark:text-white">PowerPoint (.pptx)</p>
-                          <p className="text-[10px] text-neutral-500">16:9 presentation slides only</p>
+                          <p className="text-xs font-bold text-neutral-900 dark:text-white">PDF Presentation (.pdf)</p>
+                          <p className="text-[10px] text-neutral-500">Widescreen 16:9 print-ready deck</p>
                         </button>
                         <button
                           type="button"
-                          onClick={handleOpenSlidesPrintPreview}
+                          onClick={handleDownloadSlidesPptx}
                           className="w-full text-left px-3 py-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/10 cursor-pointer"
                         >
-                          <p className="text-xs font-bold text-neutral-900 dark:text-white">Print / Save PDF</p>
-                          <p className="text-[10px] text-neutral-500">Slides-only handout preview</p>
+                          <p className="text-xs font-bold text-neutral-900 dark:text-white">PowerPoint Deck (.pptx)</p>
+                          <p className="text-[10px] text-neutral-500">Editable slides &amp; native charts</p>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDownloadSlidesHtml}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/10 cursor-pointer"
+                        >
+                          <p className="text-xs font-bold text-neutral-900 dark:text-white">Interactive HTML (.html)</p>
+                          <p className="text-[10px] text-neutral-500">Standalone browser slideshow</p>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDownloadSlidesMarkdown}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/10 cursor-pointer"
+                        >
+                          <p className="text-xs font-bold text-neutral-900 dark:text-white">Markdown Outline (.md)</p>
+                          <p className="text-[10px] text-neutral-500">Slides &amp; tables for docs</p>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDownloadSlidesJson}
+                          className="w-full text-left px-3 py-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/10 cursor-pointer"
+                        >
+                          <p className="text-xs font-bold text-neutral-900 dark:text-white">Structured JSON (.json)</p>
+                          <p className="text-[10px] text-neutral-500">Portable open presentation data</p>
                         </button>
                       </div>
                     )}
@@ -3064,246 +3760,308 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   <button
                     type="button"
                     onClick={handleDeleteCurrentDeck}
-                    className="px-3 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950 text-xs font-bold cursor-pointer"
+                    className="px-3 py-2 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-950 text-xs font-semibold cursor-pointer whitespace-nowrap"
                   >
-                    Delete Deck
+                    Delete
                   </button>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Left Sorter Rail */}
-                <div className="lg:col-span-3 rounded-3xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-neutral-900 p-4 space-y-3 h-fit">
+                {/* Left Card Rail (Gamma-style compact outline) */}
+                <div className="lg:col-span-3 rounded-3xl border border-[#E5E5E5] dark:border-white/10 bg-white dark:bg-neutral-900 p-4 space-y-3 h-fit">
                   <div className="flex items-center justify-between">
-                    <h2 className="font-display text-sm font-extrabold">Slides ({slides.length})</h2>
+                    <h2 className="text-xs font-mono uppercase tracking-wider text-neutral-500 font-bold">
+                      Cards ({slides.length})
+                    </h2>
                     <button
                       type="button"
                       onClick={addNewSlide}
-                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer"
                     >
-                      + Slide
+                      + Card
                     </button>
                   </div>
 
-              <div className="space-y-2 max-h-[520px] overflow-y-auto">
-                {slides.map((s, idx) => {
-                  const active = s.id === activeSlide?.id;
-                  const tSpec = SLIDE_THEMES[s.theme || deckTheme] || SLIDE_THEMES.midnight;
-                  return (
-                    <div
-                      key={s.id}
-                      onClick={() => setActiveSlideId(s.id)}
-                      className={`p-3 rounded-2xl border cursor-pointer transition-all space-y-2 ${
-                        active
-                          ? 'border-indigo-600 dark:border-sky-400 bg-indigo-50/70 dark:bg-indigo-950/40 shadow-xs'
-                          : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-400'
-                      }`}
-                    >
-                      <div className={`h-2 rounded-full w-full ${tSpec.bgClass}`} />
-                      <div className="flex items-center justify-between gap-1 text-[10px] font-mono text-neutral-500">
-                        <span>
-                          Slide {idx + 1} · {s.layout}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              moveSlide(s.id, -1);
-                            }}
-                            className="px-1 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
-                            title="Move up"
-                          >
-                            &uarr;
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              moveSlide(s.id, 1);
-                            }}
-                            className="px-1 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
-                            title="Move down"
-                          >
-                            &darr;
-                          </button>
-                          {slides.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteSlide(s.id);
-                              }}
-                              className="px-1 text-rose-500 hover:text-rose-400 cursor-pointer"
-                              title="Remove slide"
-                            >
-                              &times;
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      <p className="text-xs font-bold line-clamp-2">{s.title || 'Untitled Slide'}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Right: Rich Expressive 16:9 Slide Stage & Editor */}
-            {activeSlide && (
-              <div className="lg:col-span-9 space-y-5">
-                {/* 16:9 Rich Visual Stage */}
-                <div
-                  className={`rounded-3xl p-7 sm:p-10 aspect-[16/9] flex flex-col justify-between shadow-xl relative overflow-hidden ${currentThemeSpec.bgClass} ${currentThemeSpec.textClass}`}
-                >
-                  {/* Decorative Geometric Backdrop Accent */}
-                  <div className="pointer-events-none absolute -top-20 -right-20 w-72 h-72 rounded-full bg-white/[0.04] blur-2xl" />
-
-                  <div className="flex items-center justify-between text-xs font-mono opacity-80 relative z-10">
-                    <span className={`uppercase tracking-widest font-bold ${currentThemeSpec.accentText}`}>
-                      {boardTitle}
-                    </span>
-                    <span>
-                      {slides.findIndex((s) => s.id === activeSlide.id) + 1} / {slides.length}
-                    </span>
-                  </div>
-
-                  {/* Layout-Adaptive Visual Stage */}
-                  {activeSlide.layout === 'cover' && (
-                    <div className="my-auto grid grid-cols-1 md:grid-cols-12 gap-6 items-center relative z-10">
-                      <div className="md:col-span-8 space-y-3">
-                        <span
-                          className={`inline-block text-[11px] font-mono uppercase tracking-[0.18em] font-bold ${currentThemeSpec.accentText}`}
+                  <div className="space-y-2 max-h-[520px] overflow-y-auto">
+                    {slides.map((s, idx) => {
+                      const active = s.id === activeSlide?.id;
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => setActiveSlideId(s.id)}
+                          className={`p-3 rounded-2xl border cursor-pointer transition-all space-y-1.5 ${
+                            active
+                              ? 'border-neutral-900 dark:border-white bg-[#FAFAFA] dark:bg-white/[0.06] shadow-xs'
+                              : 'border-[#E5E5E5] dark:border-neutral-800 hover:border-neutral-400'
+                          }`}
                         >
-                          Executive Blueprint
-                        </span>
-                        <h3 className="font-display text-2xl sm:text-4xl font-extrabold tracking-tight leading-[1.12]">
-                          {activeSlide.title}
-                        </h3>
-                        {activeSlide.subtitle && (
-                          <p className={`text-sm sm:text-base max-w-xl ${currentThemeSpec.mutedClass}`}>
-                            {activeSlide.subtitle}
-                          </p>
-                        )}
-                      </div>
-                      <div className={`md:col-span-4 rounded-2xl p-5 space-y-3 ${currentThemeSpec.cardClass}`}>
-                        {activeSlide.metricHighlight && (
-                          <div className="pb-3 border-b border-current/15">
-                            <p className="text-[10px] font-mono uppercase opacity-70">Target Milestone</p>
-                            <p className={`font-display text-2xl font-extrabold ${currentThemeSpec.accentText}`}>
-                              {activeSlide.metricHighlight}
-                            </p>
-                          </div>
-                        )}
-                        <ul className="space-y-1.5 text-xs">
-                          {(activeSlide.bullets || []).filter(Boolean).slice(0, 3).map((b, i) => (
-                            <li key={i} className="flex items-start gap-2">
-                              <span className={currentThemeSpec.accentText}>&#9670;</span>
-                              <span className="opacity-90">{b}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  )}
-
-                  {activeSlide.layout === 'metrics' && (
-                    <div className="my-auto space-y-5 relative z-10">
-                      <div className="flex flex-wrap items-end justify-between gap-4">
-                        <div>
-                          <h3 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight">
-                            {activeSlide.title}
-                          </h3>
-                          {activeSlide.subtitle && (
-                            <p className={`text-sm mt-1 ${currentThemeSpec.mutedClass}`}>{activeSlide.subtitle}</p>
-                          )}
-                        </div>
-                        {activeSlide.metricHighlight && (
-                          <div className={`px-5 py-2.5 rounded-2xl ${currentThemeSpec.cardClass}`}>
-                            <span className="text-[10px] font-mono uppercase block opacity-70">Headline KPI</span>
-                            <span className={`font-display text-xl font-extrabold ${currentThemeSpec.accentText}`}>
-                              {activeSlide.metricHighlight}
+                          <div className="flex items-center justify-between gap-1 text-[10px] font-mono text-neutral-500">
+                            <span>
+                              {String(idx + 1).padStart(2, '0')} · {s.layout}
                             </span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                        {(activeSlide.bullets || []).filter(Boolean).slice(0, 3).map((b, i) => (
-                          <div key={i} className={`rounded-2xl p-4 flex flex-col justify-between ${currentThemeSpec.cardClass}`}>
-                            <span className={`text-xs font-mono font-bold ${currentThemeSpec.accentText}`}>
-                              0{i + 1} · KEY METRIC
-                            </span>
-                            <p className="text-sm font-semibold leading-snug mt-3">{b}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {activeSlide.layout === 'roadmap' && (
-                    <div className="my-auto space-y-6 relative z-10">
-                      <div>
-                        <h3 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight">
-                          {activeSlide.title}
-                        </h3>
-                        {activeSlide.subtitle && (
-                          <p className={`text-sm mt-1 ${currentThemeSpec.mutedClass}`}>{activeSlide.subtitle}</p>
-                        )}
-                      </div>
-
-                      <div className="relative">
-                        <div className="hidden sm:block absolute top-5 left-6 right-6 h-0.5 bg-current/20" />
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 relative">
-                          {(activeSlide.bullets || []).filter(Boolean).slice(0, 3).map((b, i) => (
-                            <div key={i} className={`rounded-2xl p-4 space-y-2.5 ${currentThemeSpec.cardClass}`}>
-                              <div className="flex items-center justify-between">
-                                <span
-                                  className={`w-8 h-8 rounded-xl flex items-center justify-center text-xs font-mono font-extrabold bg-current/10 ${currentThemeSpec.accentText}`}
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveSlide(s.id, -1);
+                                }}
+                                className="px-1 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
+                                title="Move up"
+                              >
+                                &uarr;
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveSlide(s.id, 1);
+                                }}
+                                className="px-1 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
+                                title="Move down"
+                              >
+                                &darr;
+                              </button>
+                              {slides.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    deleteSlide(s.id);
+                                  }}
+                                  className="px-1 text-rose-500 hover:text-rose-400 cursor-pointer"
+                                  title="Remove slide"
                                 >
-                                  P{i + 1}
-                                </span>
-                                <span className="text-[10px] font-mono opacity-65">STAGE {i + 1}</span>
-                              </div>
-                              <p className="text-xs sm:text-sm font-semibold leading-snug">{b}</p>
+                                  &times;
+                                </button>
+                              )}
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {activeSlide.layout === 'two-col' && (
-                    <div className="my-auto grid grid-cols-1 md:grid-cols-12 gap-5 items-center relative z-10">
-                      <div className="md:col-span-5 space-y-2">
-                        <span className={`text-xs font-mono uppercase tracking-wider font-bold ${currentThemeSpec.accentText}`}>
-                          Structured View
-                        </span>
-                        <h3 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight">
-                          {activeSlide.title}
-                        </h3>
-                        {activeSlide.subtitle && (
-                          <p className={`text-sm ${currentThemeSpec.mutedClass}`}>{activeSlide.subtitle}</p>
-                        )}
-                      </div>
-                      <div className="md:col-span-7 grid grid-cols-1 gap-2.5">
-                        {(activeSlide.bullets || []).filter(Boolean).map((b, i) => (
-                          <div key={i} className={`rounded-xl px-4 py-3 flex items-start gap-3 ${currentThemeSpec.cardClass}`}>
-                            <span className={`text-xs font-mono font-bold mt-0.5 ${currentThemeSpec.accentText}`}>
-                              0{i + 1}
-                            </span>
-                            <span className="text-xs sm:text-sm leading-snug">{b}</span>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between text-[11px] font-mono opacity-60 pt-2 border-t border-current/15 relative z-10">
-                    <span>{currentUser?.displayName || collabName || 'Workspace Member'}</span>
-                    <span>{currentThemeSpec.label}</span>
+                          <p className="text-xs font-semibold line-clamp-2">{s.title || 'Untitled Slide'}</p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
+
+                {/* Right: Gamma-Inspired Clean Swiss Paper 16:9 Slide Stage & Editor */}
+                {activeSlide && (
+                  <div className="lg:col-span-9 space-y-4">
+                    <div
+                      style={{
+                        fontFamily: (SLIDE_FONTS[activeSlide.fontStyle || slideFontStyle] || SLIDE_FONTS.swiss_sans).cssFamily,
+                      }}
+                      className={`rounded-3xl p-7 sm:p-11 aspect-[16/9] flex flex-col justify-between shadow-sm relative overflow-hidden ${currentThemeSpec.bgClass} ${currentThemeSpec.textClass}`}
+                    >
+                      <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-[0.16em] relative z-10">
+                        <span className={`font-bold ${currentThemeSpec.accentText}`}>{boardTitle}</span>
+                        <span className={currentThemeSpec.mutedClass}>
+                          {String(slides.findIndex((s) => s.id === activeSlide.id) + 1).padStart(2, '0')} /{' '}
+                          {String(slides.length).padStart(2, '0')}
+                        </span>
+                      </div>
+
+                      {activeSlide.layout === 'cover' && (
+                        <div className="my-auto grid grid-cols-1 md:grid-cols-12 gap-6 items-center relative z-10">
+                          <div className="md:col-span-8 space-y-3">
+                            <h3 className="text-2xl sm:text-4xl font-extrabold tracking-tight leading-[1.1]">
+                              {activeSlide.title}
+                            </h3>
+                            {activeSlide.subtitle && (
+                              <p className={`text-sm sm:text-base max-w-xl leading-relaxed ${currentThemeSpec.mutedClass}`}>
+                                {activeSlide.subtitle}
+                              </p>
+                            )}
+                          </div>
+                          <div className={`md:col-span-4 rounded-2xl p-5 space-y-3 ${currentThemeSpec.cardClass}`}>
+                            {activeSlide.metricHighlight && (
+                              <div className="pb-3 border-b border-current/10">
+                                <p className={`text-[10px] font-mono uppercase ${currentThemeSpec.mutedClass}`}>Highlight</p>
+                                <p className={`text-2xl font-extrabold tracking-tight tabular-nums ${currentThemeSpec.accentText}`}>
+                                  {activeSlide.metricHighlight}
+                                </p>
+                              </div>
+                            )}
+                            <ul className="space-y-2 text-xs">
+                              {(activeSlide.bullets || []).filter(Boolean).slice(0, 3).map((b, i) => (
+                                <li key={i} className="flex items-start gap-2 leading-snug">
+                                  <span className={`font-mono font-bold ${currentThemeSpec.accentText}`}>0{i + 1}</span>
+                                  <span>{b}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+
+                      {activeSlide.layout === 'metrics' && (
+                        <div className="my-auto space-y-5 relative z-10">
+                          <div className="flex flex-wrap items-end justify-between gap-4">
+                            <div>
+                              <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight">{activeSlide.title}</h3>
+                              {activeSlide.subtitle && (
+                                <p className={`text-sm mt-1 ${currentThemeSpec.mutedClass}`}>{activeSlide.subtitle}</p>
+                              )}
+                            </div>
+                            {activeSlide.metricHighlight && (
+                              <div className={`px-4 py-2 rounded-xl ${currentThemeSpec.cardClass}`}>
+                                <span className={`text-[10px] font-mono uppercase block ${currentThemeSpec.mutedClass}`}>Target</span>
+                                <span className={`text-xl font-extrabold tabular-nums ${currentThemeSpec.accentText}`}>
+                                  {activeSlide.metricHighlight}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-12 gap-3.5 items-stretch">
+                            <div className={`${Array.isArray(activeSlide.chartBars) && activeSlide.chartBars.length > 0 ? 'md:col-span-7' : 'md:col-span-12'} grid grid-cols-1 sm:grid-cols-3 gap-3`}>
+                              {(activeSlide.bullets || []).filter(Boolean).slice(0, 3).map((b, i) => (
+                                <div key={i} className={`rounded-2xl p-4 flex flex-col justify-between ${currentThemeSpec.cardClass}`}>
+                                  <span className={`text-[11px] font-mono font-bold ${currentThemeSpec.accentText}`}>
+                                    0{i + 1}
+                                  </span>
+                                  <p className="text-xs sm:text-sm font-medium leading-snug mt-2">{b}</p>
+                                </div>
+                              ))}
+                            </div>
+                            {Array.isArray(activeSlide.chartBars) && activeSlide.chartBars.length > 0 && (
+                              <div className={`md:col-span-5 rounded-2xl p-4 space-y-2.5 ${currentThemeSpec.cardClass}`}>
+                                <p className={`text-[10px] font-mono uppercase tracking-wider font-bold ${currentThemeSpec.mutedClass}`}>
+                                  Financial Mix
+                                </p>
+                                {(() => {
+                                  const bars = activeSlide.chartBars!.slice(0, 4);
+                                  const maxV = Math.max(1, ...bars.map((x) => Number(x.value) || 0));
+                                  return bars.map((bar, bi) => {
+                                    const pct = Math.max(10, Math.min(100, Math.round(((Number(bar.value) || 0) / maxV) * 100)));
+                                    return (
+                                      <div key={bi} className="space-y-1">
+                                        <div className="flex justify-between text-[11px] font-mono">
+                                          <span className="truncate">{bar.label}</span>
+                                          <span className={`font-bold tabular-nums ${currentThemeSpec.accentText}`}>
+                                            {bar.value}{bar.unit || ''}
+                                          </span>
+                                        </div>
+                                        <div className="w-full h-1.5 rounded-full bg-current/10 overflow-hidden">
+                                          <div
+                                            className="h-full rounded-full"
+                                            style={{ width: `${pct}%`, backgroundColor: currentThemeSpec.accentHex }}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  });
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {activeSlide.layout === 'roadmap' && (
+                        <div className="my-auto space-y-6 relative z-10">
+                          <div>
+                            <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight">{activeSlide.title}</h3>
+                            {activeSlide.subtitle && (
+                              <p className={`text-sm mt-1 ${currentThemeSpec.mutedClass}`}>{activeSlide.subtitle}</p>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            {(activeSlide.bullets || []).filter(Boolean).slice(0, 3).map((b, i) => (
+                              <div key={i} className={`rounded-2xl p-4 space-y-2.5 ${currentThemeSpec.cardClass}`}>
+                                <div className="flex items-center justify-between">
+                                  <span className={`text-xs font-mono font-bold ${currentThemeSpec.accentText}`}>
+                                    Phase 0{i + 1}
+                                  </span>
+                                </div>
+                                <p className="text-xs sm:text-sm font-medium leading-snug">{b}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {activeSlide.layout === 'two-col' && (
+                        <div className="my-auto grid grid-cols-1 md:grid-cols-12 gap-6 items-center relative z-10">
+                          <div className="md:col-span-5 space-y-2">
+                            <h3 className="text-2xl sm:text-3xl font-extrabold tracking-tight leading-tight">
+                              {activeSlide.title}
+                            </h3>
+                            {activeSlide.subtitle && (
+                              <p className={`text-sm leading-relaxed ${currentThemeSpec.mutedClass}`}>{activeSlide.subtitle}</p>
+                            )}
+                            {Array.isArray(activeSlide.chartBars) && activeSlide.chartBars.length > 0 && (
+                              <div className={`mt-3 rounded-xl p-3 space-y-1.5 ${currentThemeSpec.cardClass}`}>
+                                {(() => {
+                                  const bars = activeSlide.chartBars!.slice(0, 3);
+                                  const maxV = Math.max(1, ...bars.map((x) => Number(x.value) || 0));
+                                  return bars.map((bar, bi) => {
+                                    const pct = Math.max(10, Math.min(100, Math.round(((Number(bar.value) || 0) / maxV) * 100)));
+                                    return (
+                                      <div key={bi} className="space-y-0.5">
+                                        <div className="flex justify-between text-[10px] font-mono">
+                                          <span>{bar.label}</span>
+                                          <span className="font-bold tabular-nums">{bar.value}{bar.unit || ''}</span>
+                                        </div>
+                                        <div className="w-full h-1 rounded-full bg-current/10 overflow-hidden">
+                                          <div
+                                            className="h-full rounded-full"
+                                            style={{ width: `${pct}%`, backgroundColor: currentThemeSpec.accentHex }}
+                                          />
+                                        </div>
+                                      </div>
+                                    );
+                                  });
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                          <div className="md:col-span-7 grid grid-cols-1 gap-2.5">
+                            {(activeSlide.bullets || []).filter(Boolean).map((b, i) => (
+                              <div key={i} className={`rounded-xl px-4 py-3 flex items-start gap-3 ${currentThemeSpec.cardClass}`}>
+                                <span className={`text-xs font-mono font-bold mt-0.5 ${currentThemeSpec.accentText}`}>
+                                  0{i + 1}
+                                </span>
+                                <span className="text-xs sm:text-sm leading-snug">{b}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className={`flex items-center justify-between text-[11px] font-mono pt-3 border-t border-current/10 relative z-10 ${currentThemeSpec.mutedClass}`}>
+                        <span>{currentUser?.displayName || collabName || 'Workspace Member'}</span>
+                        <span>{currentThemeSpec.label}</span>
+                      </div>
+                    </div>
+
+                    {/* Quick Stage Stepper */}
+                    <div className="flex items-center justify-between px-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const idx = slides.findIndex((s) => s.id === activeSlide.id);
+                          if (idx > 0) setActiveSlideId(slides[idx - 1].id);
+                        }}
+                        disabled={slides.findIndex((s) => s.id === activeSlide.id) <= 0}
+                        className="px-3.5 py-1.5 rounded-xl border border-[#E5E5E5] dark:border-neutral-800 text-xs font-semibold disabled:opacity-35 cursor-pointer"
+                      >
+                        &larr; Previous Card
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const idx = slides.findIndex((s) => s.id === activeSlide.id);
+                          if (idx >= 0 && idx < slides.length - 1) setActiveSlideId(slides[idx + 1].id);
+                        }}
+                        disabled={slides.findIndex((s) => s.id === activeSlide.id) >= slides.length - 1}
+                        className="px-3.5 py-1.5 rounded-xl border border-[#E5E5E5] dark:border-neutral-800 text-xs font-semibold disabled:opacity-35 cursor-pointer"
+                      >
+                        Next Card &rarr;
+                      </button>
+                    </div>
 
                 {/* Slide Property Editor */}
                 <div className="rounded-3xl border border-neutral-200 dark:border-white/10 bg-white dark:bg-neutral-900 p-5 space-y-4">
@@ -3400,7 +4158,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                       muted
                       style={videoBlurOn && !screenOn ? { filter: 'blur(0.4px) saturate(1.06)' } : undefined}
                       className={`w-full h-full object-cover ${camOn || screenOn ? 'block' : 'hidden'} ${
-                        camOn && !screenOn ? '-scale-x-100' : ''
+                        camOn && !screenOn && cameraFacingMode === 'user' ? '-scale-x-100' : ''
                       }`}
                     />
                     {!camOn && !screenOn && (
@@ -3467,6 +4225,15 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                             )}
                           </svg>
                         </button>
+
+                        <button
+                          type="button"
+                          onClick={() => void handleSwitchCameraFacing()}
+                          className="px-3 h-10 rounded-full bg-white/15 hover:bg-white/25 text-white border border-white/20 text-[11px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                          title="Switch between front and rear camera"
+                        >
+                          <span>{cameraFacingMode === 'user' ? 'Rear Cam' : 'Front Cam'}</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -3507,93 +4274,201 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   </div>
                 </div>
 
-                {/* Right: Pre-Join Identity, Share Link & Join CTA */}
+                {/* Right: Pre-Join Room Code Confirmation, Waiting Room & Host Permission Flow */}
                 <div className="lg:col-span-5 flex flex-col justify-between gap-5 rounded-2xl bg-white/[0.04] border border-white/10 p-5 sm:p-6">
-                  <div className="space-y-4">
-                    <div>
-                      <h2 className="text-lg font-bold tracking-tight text-white">Ready to join?</h2>
-                      <p className="text-xs text-neutral-400 mt-1">
-                        Preview audio and video before entering the room.
-                      </p>
-                    </div>
+                  {roomJoinState === 'waiting' ? (
+                    <div className="flex-1 flex flex-col justify-between gap-6 py-2">
+                      <div className="space-y-4">
+                        <div className="w-11 h-11 rounded-2xl border-2 border-sky-400/40 border-t-sky-400 animate-spin" />
+                        <div>
+                          <p className="text-xs font-mono uppercase tracking-wider text-sky-400 font-semibold">
+                            Waiting Room &middot; {roomCode}
+                          </p>
+                          <h2 className="text-xl font-bold tracking-tight text-white mt-1">
+                            Asking host for permission
+                          </h2>
+                          <p className="text-xs text-neutral-300 mt-1.5 leading-relaxed">
+                            {waitingStatusMessage || 'Your request has been sent to the host. You will enter automatically as soon as they admit you.'}
+                          </p>
+                        </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-mono text-neutral-400 mb-1">Your Name</label>
-                        <input
-                          type="text"
-                          value={collabName}
-                          onChange={(e) => setCollabName(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-white outline-none focus:border-sky-400"
-                        />
+                        <div className="p-3.5 rounded-xl bg-black/40 border border-white/10 space-y-1 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">Meeting Code</span>
+                            <span className="font-mono font-bold text-white">{roomCode}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-neutral-400">Joining As</span>
+                            <span className="font-semibold text-white">{collabName}</span>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-[11px] font-mono text-neutral-400 mb-1">Role</label>
-                        <input
-                          type="text"
-                          value={collabRole}
-                          onChange={(e) => setCollabRole(e.target.value)}
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-white outline-none focus:border-sky-400"
-                        />
-                      </div>
-                    </div>
 
-                    <div>
-                      <label className="block text-[11px] font-mono text-neutral-400 mb-1">Meeting Code</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={roomCode}
-                          onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-                          className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs font-mono uppercase text-white outline-none focus:border-sky-400"
-                        />
-                        <button
-                          type="button"
-                          onClick={handleNewSessionRoom}
-                          className="px-3 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold cursor-pointer shrink-0"
-                        >
-                          New Code
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-xl bg-black/35 border border-white/10 flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-mono text-sky-300 truncate">{meetingShareUrl}</span>
                       <button
                         type="button"
-                        onClick={handleCopyMeetingLink}
-                        className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-white shrink-0 cursor-pointer"
+                        onClick={() => disconnectRoom(false)}
+                        className="w-full py-3 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-xs font-bold cursor-pointer transition-colors"
                       >
-                        Copy Link
+                        Cancel Request
                       </button>
                     </div>
+                  ) : roomJoinState === 'denied' ? (
+                    <div className="flex-1 flex flex-col justify-between gap-6 py-2">
+                      <div className="space-y-3">
+                        <div className="w-11 h-11 rounded-2xl bg-rose-500/15 border border-rose-500/35 text-rose-400 flex items-center justify-center font-mono text-lg font-bold">
+                          !
+                        </div>
+                        <div>
+                          <p className="text-xs font-mono uppercase tracking-wider text-rose-400 font-semibold">
+                            Room Access Declined &middot; {roomCode}
+                          </p>
+                          <h2 className="text-xl font-bold tracking-tight text-white mt-1">
+                            You cannot join this meeting
+                          </h2>
+                          <p className="text-xs text-neutral-300 mt-1.5 leading-relaxed">
+                            {mediaError || 'The host declined your join request or removed you from this room.'}
+                          </p>
+                        </div>
+                      </div>
 
-                    {mediaError && (
-                      <div className="px-3.5 py-2.5 rounded-xl bg-rose-950/70 border border-rose-500/40 text-rose-200 text-xs flex items-center justify-between gap-2">
-                        <span>{mediaError}</span>
-                        <button type="button" onClick={() => setMediaError(null)} className="font-bold cursor-pointer">
-                          Dismiss
+                      <div className="space-y-2.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRoomJoinState('idle');
+                            setMediaError(null);
+                          }}
+                          className="w-full py-3 rounded-2xl bg-white/10 hover:bg-white/15 text-white text-xs font-bold cursor-pointer transition-colors"
+                        >
+                          Enter Another Room Code
                         </button>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="space-y-4">
+                        <div>
+                          <h2 className="text-lg font-bold tracking-tight text-white">
+                            {isInviteMode ? 'Confirm Room & Ask to Join' : 'Ready to join?'}
+                          </h2>
+                          <p className="text-xs text-neutral-400 mt-1">
+                            {isInviteMode
+                              ? 'Confirm your name and meeting code below, then ask the host for permission to join.'
+                              : 'Preview audio and video before hosting or asking to join a meeting.'}
+                          </p>
+                        </div>
 
-                  <div className="flex flex-col gap-2.5 pt-2">
-                    <button
-                      type="button"
-                      onClick={connectToRoom}
-                      className="w-full py-3.5 rounded-2xl bg-sky-500 hover:bg-sky-400 text-neutral-950 text-sm font-bold cursor-pointer transition-colors"
-                    >
-                      Join Call
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCopyRoomCode}
-                      className="w-full py-2.5 rounded-xl border border-white/10 hover:bg-white/5 text-xs font-semibold text-neutral-300 cursor-pointer transition-colors"
-                    >
-                      Copy Code Only ({roomCode})
-                    </button>
-                  </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[11px] font-mono text-neutral-400 mb-1">Your Name *</label>
+                            <input
+                              type="text"
+                              value={collabName}
+                              onChange={(e) => setCollabName(e.target.value)}
+                              placeholder="Enter your name"
+                              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-white outline-none focus:border-sky-400"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-mono text-neutral-400 mb-1">Role</label>
+                            <input
+                              type="text"
+                              value={collabRole}
+                              onChange={(e) => setCollabRole(e.target.value)}
+                              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-white outline-none focus:border-sky-400"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-mono text-neutral-400 mb-1">
+                            Meeting Code *
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={roomCode}
+                              onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                              placeholder="MEET-XXXX-XX"
+                              className="flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs font-mono uppercase text-white outline-none focus:border-sky-400"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleNewSessionRoom}
+                              className="px-3 py-2 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-xs font-semibold cursor-pointer shrink-0 whitespace-nowrap"
+                            >
+                              New Code
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-black/35 border border-white/10 flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-mono text-sky-300 truncate">{meetingShareUrl}</span>
+                          <button
+                            type="button"
+                            onClick={handleCopyMeetingLink}
+                            className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-white shrink-0 cursor-pointer whitespace-nowrap"
+                          >
+                            Copy Link
+                          </button>
+                        </div>
+
+                        {mediaError && (
+                          <div className="px-3.5 py-2.5 rounded-xl bg-rose-950/70 border border-rose-500/40 text-rose-200 text-xs flex items-center justify-between gap-2">
+                            <span>{mediaError}</span>
+                            <button type="button" onClick={() => setMediaError(null)} className="font-bold cursor-pointer">
+                              Dismiss
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-2.5 pt-2">
+                        {isInviteMode ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => connectToRoom('knock')}
+                              className="w-full py-3.5 rounded-2xl bg-sky-500 hover:bg-sky-400 text-neutral-950 text-sm font-bold cursor-pointer transition-colors"
+                            >
+                              Ask Host to Join
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => connectToRoom('host')}
+                              className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white cursor-pointer transition-colors"
+                            >
+                              Start Room as Host
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => connectToRoom('host')}
+                              className="w-full py-3.5 rounded-2xl bg-sky-500 hover:bg-sky-400 text-neutral-950 text-sm font-bold cursor-pointer transition-colors"
+                            >
+                              Start Room as Host
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => connectToRoom('knock')}
+                              className="w-full py-2.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white cursor-pointer transition-colors"
+                            >
+                              Ask Host to Join Room
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleCopyRoomCode}
+                          className="w-full py-2 rounded-xl border border-white/10 hover:bg-white/5 text-xs font-semibold text-neutral-300 cursor-pointer transition-colors"
+                        >
+                          Copy Code Only ({roomCode})
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -3607,6 +4482,9 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
               <div className="px-4 sm:px-6 py-3 border-b border-white/10 bg-[#14171F] flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-3 min-w-0">
                   <span className="text-sm font-bold text-white tracking-tight truncate">{roomCode}</span>
+                  {isRoomHost && (
+                    <span className="text-[11px] font-mono text-sky-400 font-semibold">Host</span>
+                  )}
                   <span className="text-white/20" aria-hidden="true">|</span>
                   <span className="text-xs font-mono tabular-nums text-neutral-300">
                     {formatCallDuration(callElapsedSec)}
@@ -3675,6 +4553,46 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                 </div>
               )}
 
+              {isRoomHost && waitingRequests.length > 0 && (
+                <div className="mx-4 mt-3 px-4 py-3 rounded-2xl bg-[#192030] border border-sky-400/35 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-white">
+                      {waitingRequests.length === 1
+                        ? `${waitingRequests[0].name} wants to join this room`
+                        : `${waitingRequests.length} people waiting to join this room`}
+                    </p>
+                    <p className="text-[11px] text-neutral-300 truncate">
+                      {waitingRequests.map((w) => w.name).join(' · ')}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleHostDenyPeer(waitingRequests[0].clientId)}
+                      className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-rose-600/30 border border-white/15 text-xs font-semibold text-neutral-100 cursor-pointer whitespace-nowrap"
+                    >
+                      Deny
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleHostAdmitPeer(waitingRequests[0].clientId)}
+                      className="px-3.5 py-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-neutral-950 text-xs font-bold cursor-pointer whitespace-nowrap"
+                    >
+                      Admit
+                    </button>
+                    {waitingRequests.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setSidePanel('people')}
+                        className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-sky-300 cursor-pointer whitespace-nowrap"
+                      >
+                        View All
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Center Stage + Optional Collapsible Side Drawer */}
               <div className="flex-1 flex flex-col lg:flex-row min-h-[440px] relative">
                 {/* Floating Transient Emoji Reactions Layer */}
@@ -3734,7 +4652,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                                 muted
                                 style={videoBlurOn && !screenOn ? { filter: 'blur(0.4px) saturate(1.06)' } : undefined}
                                 className={`w-full h-full object-cover ${camOn || screenOn ? 'block' : 'hidden'} ${
-                                  camOn && !screenOn ? '-scale-x-100' : ''
+                                  camOn && !screenOn && cameraFacingMode === 'user' ? '-scale-x-100' : ''
                                 }`}
                               />
                               {!camOn && !screenOn && (
@@ -3781,7 +4699,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                               muted
                               style={videoBlurOn && !screenOn ? { filter: 'blur(0.4px) saturate(1.06)' } : undefined}
                               className={`w-full h-full object-cover ${camOn || screenOn ? 'block' : 'hidden'} ${
-                                camOn && !screenOn ? '-scale-x-100' : ''
+                                camOn && !screenOn && cameraFacingMode === 'user' ? '-scale-x-100' : ''
                               }`}
                             />
                             {!camOn && !screenOn && (
@@ -3859,7 +4777,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                             muted
                             style={videoBlurOn && !screenOn ? { filter: 'blur(0.4px) saturate(1.06)' } : undefined}
                             className={`w-full h-full object-cover ${camOn || screenOn ? 'block' : 'hidden'} ${
-                              camOn && !screenOn ? '-scale-x-100' : ''
+                              camOn && !screenOn && cameraFacingMode === 'user' ? '-scale-x-100' : ''
                             }`}
                           />
                           {!camOn && !screenOn && (
@@ -4007,49 +4925,126 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                     )}
 
                     {sidePanel === 'people' && (
-                      <div className="flex-1 p-4 space-y-2.5 overflow-y-auto max-h-[420px]">
-                        {(participants.length > 0
-                          ? participants
-                          : [
-                              {
-                                clientId: 'local',
-                                name: collabName || 'You',
-                                role: collabRole || 'Host',
-                                color: '#4F46E5',
-                                joinedAt: '',
-                                micOn,
-                                camOn,
-                                screenOn,
-                                handRaised,
-                              },
-                            ]
-                        ).map((p) => (
-                          <div
-                            key={p.clientId}
-                            className="flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-white/[0.04] border border-white/10"
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="flex-1 p-4 space-y-4 overflow-y-auto max-h-[420px]">
+                        {isRoomHost && waitingRequests.length > 0 && (
+                          <div className="space-y-2 pb-3 border-b border-white/10">
+                            <p className="text-[11px] font-mono uppercase tracking-wider text-sky-400 font-bold">
+                              Waiting for Approval ({waitingRequests.length})
+                            </p>
+                            {waitingRequests.map((w) => (
                               <div
-                                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
-                                style={{ backgroundColor: p.color || '#4F46E5' }}
+                                key={w.clientId}
+                                className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-sky-500/10 border border-sky-400/25"
                               >
-                                {(p.name || 'M').charAt(0).toUpperCase()}
+                                <div className="min-w-0">
+                                  <p className="text-xs font-semibold text-white truncate">{w.name}</p>
+                                  <p className="text-[10px] font-mono text-neutral-300 truncate">{w.role}</p>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleHostDenyPeer(w.clientId)}
+                                    className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-rose-600/35 text-[11px] font-semibold text-neutral-200 cursor-pointer whitespace-nowrap"
+                                  >
+                                    Deny
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleHostAdmitPeer(w.clientId)}
+                                    className="px-2.5 py-1 rounded-lg bg-sky-500 hover:bg-sky-400 text-neutral-950 text-[11px] font-bold cursor-pointer whitespace-nowrap"
+                                  >
+                                    Admit
+                                  </button>
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <p className="text-xs font-semibold text-white truncate">
-                                  {p.name} {(p.peerId || p.clientId) === myPeerIdRef.current ? '(You)' : ''}
-                                </p>
-                                <p className="text-[10px] font-mono text-neutral-400 truncate">{p.role}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1.5 text-[10px] font-mono shrink-0">
-                              {p.handRaised && <span title="Hand raised">&#9995;</span>}
-                              <span className={p.micOn ? 'text-emerald-400' : 'text-neutral-500'}>
-                                {p.micOn ? 'Mic' : 'Muted'}
-                              </span>
-                            </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
+
+                        <div className="space-y-2">
+                          <p className="text-[11px] font-mono uppercase tracking-wider text-neutral-400 font-bold">
+                            In Call ({participants.length || 1})
+                          </p>
+                          {(participants.length > 0
+                            ? participants
+                            : [
+                                {
+                                  clientId: 'local',
+                                  name: collabName || 'You',
+                                  role: collabRole || 'Host',
+                                  color: '#4F46E5',
+                                  joinedAt: '',
+                                  isHost: isRoomHost,
+                                  micOn,
+                                  camOn,
+                                  screenOn,
+                                  handRaised,
+                                },
+                              ]
+                          ).map((p) => {
+                            const pid = p.peerId || p.clientId;
+                            const isSelf = pid === myPeerIdRef.current || pid === 'local';
+                            return (
+                              <div
+                                key={p.clientId}
+                                className="flex items-center justify-between gap-2.5 p-2.5 rounded-xl bg-white/[0.04] border border-white/10"
+                              >
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <div
+                                    className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0"
+                                    style={{ backgroundColor: p.color || '#4F46E5' }}
+                                  >
+                                    {(p.name || 'M').charAt(0).toUpperCase()}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold text-white truncate">
+                                      {p.name} {isSelf ? '(You)' : ''} {p.isHost ? '· Host' : ''}
+                                    </p>
+                                    <p className="text-[10px] font-mono text-neutral-400 truncate">{p.role}</p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] font-mono shrink-0">
+                                  {p.handRaised && <span title="Hand raised">&#9995;</span>}
+                                  <span className={p.micOn ? 'text-emerald-400' : 'text-neutral-500'}>
+                                    {p.micOn ? 'Mic' : 'Muted'}
+                                  </span>
+                                  {isRoomHost && !isSelf && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleHostRemovePeer(p.clientId)}
+                                      className="px-2 py-0.5 rounded-md bg-rose-600/20 hover:bg-rose-600/35 text-rose-300 font-sans text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                                    >
+                                      Remove
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {isRoomHost && deniedEntries.length > 0 && (
+                          <div className="space-y-2 pt-3 border-t border-white/10">
+                            <p className="text-[11px] font-mono uppercase tracking-wider text-rose-400 font-bold">
+                              Blocked from Room ({deniedEntries.length})
+                            </p>
+                            {deniedEntries.map((entry) => (
+                              <div
+                                key={entry.guestKey}
+                                className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-rose-950/30 border border-rose-500/20"
+                              >
+                                <span className="text-xs text-neutral-200 truncate">{entry.name}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleHostUnblockDenied(entry.guestKey)}
+                                  className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-white cursor-pointer whitespace-nowrap shrink-0"
+                                >
+                                  Allow Again
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -4178,6 +5173,13 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                     {deviceMenuOpen === 'cam' && (
                       <div className="absolute bottom-full left-0 mb-2 w-60 rounded-2xl bg-[#1A1D26] border border-white/15 shadow-2xl p-2 z-50 space-y-1">
                         <p className="text-[10px] font-mono uppercase text-neutral-400 px-2 py-1">Camera</p>
+                        <button
+                          type="button"
+                          onClick={() => void handleSwitchCameraFacing()}
+                          className="w-full text-left px-2.5 py-1.5 rounded-lg text-xs text-sky-300 font-semibold hover:bg-white/10 flex items-center justify-between cursor-pointer"
+                        >
+                          <span>Flip Camera ({cameraFacingMode === 'user' ? 'Front -> Rear' : 'Rear -> Front'})</span>
+                        </button>
                         {videoInputs.map((d, i) => (
                           <button
                             key={d.deviceId || i}
@@ -4208,6 +5210,16 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                       </div>
                     )}
                   </div>
+
+                  {/* Quick Flip Camera Button for Mobile & Tablet */}
+                  <button
+                    type="button"
+                    onClick={() => void handleSwitchCameraFacing()}
+                    className="px-3 py-2.5 rounded-2xl bg-white/10 hover:bg-white/15 border border-white/10 text-xs font-semibold text-neutral-100 cursor-pointer transition-colors"
+                    title="Switch between front and rear camera"
+                  >
+                    {cameraFacingMode === 'user' ? 'Rear Cam' : 'Front Cam'}
+                  </button>
                 </div>
 
                 {/* Center: Screen Share, Hand Raise, Reactions, Chat, People, Notes */}
@@ -4276,13 +5288,13 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   <button
                     type="button"
                     onClick={() => handleToggleSidePanel('people')}
-                    className={`px-3.5 py-2.5 rounded-2xl text-xs font-semibold cursor-pointer transition-colors border ${
+                    className={`px-3.5 py-2.5 rounded-2xl text-xs font-semibold cursor-pointer transition-colors border whitespace-nowrap ${
                       sidePanel === 'people'
                         ? 'bg-sky-500 border-sky-400 text-neutral-950'
                         : 'bg-white/10 hover:bg-white/15 border-white/10 text-neutral-100'
                     }`}
                   >
-                    Participants
+                    Participants{isRoomHost && waitingRequests.length > 0 ? ` (${waitingRequests.length} waiting)` : ''}
                   </button>
 
                   <button
@@ -4301,7 +5313,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                 {/* Right: Leave Call Button */}
                 <button
                   type="button"
-                  onClick={disconnectRoom}
+                  onClick={() => disconnectRoom(false)}
                   className="px-5 py-2.5 rounded-2xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer shrink-0 transition-colors"
                 >
                   Leave Call
@@ -4312,7 +5324,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
         </div>
       )}
 
-      {/* ================= TAB 4: CONCEPT & MILESTONE VISUALS ================= */}
+      {/* ================= TAB 4: FINANCIAL GOAL VISUALS + CLICK-TO-EDIT ================= */}
       {activeTab === 'visuals' && (
         <div className="space-y-6">
           <div className="glass-card dark:bg-neutral-900/90 dark:border-neutral-800 p-5 rounded-3xl border border-neutral-200/80 space-y-4">
@@ -4326,7 +5338,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   if (visualError) setVisualError(null);
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && handleGenerateVisual()}
-                placeholder="Describe any image, scene or product concept to generate..."
+                placeholder="Describe a financial goal or wealth milestone to visualize (home, savings, retirement, vehicle)..."
                 className="flex-1 bg-neutral-50 dark:bg-neutral-950 border border-neutral-200/80 dark:border-neutral-800 rounded-2xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-sky-400"
               />
               <div className="flex gap-2 shrink-0">
@@ -4334,17 +5346,17 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   type="button"
                   onClick={handleEnhanceVisual}
                   disabled={isEnhancingVisual}
-                  className="px-4 py-3 rounded-2xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-xs font-bold cursor-pointer disabled:opacity-40"
+                  className="px-4 py-3 rounded-2xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-xs font-bold cursor-pointer disabled:opacity-40 whitespace-nowrap"
                 >
-                  {isEnhancingVisual ? 'Enhancing...' : 'Enhance Prompt'}
+                  {isEnhancingVisual ? 'Enhancing...' : 'Enhance Goal'}
                 </button>
                 <button
                   type="button"
                   onClick={handleGenerateVisual}
                   disabled={visualLoading}
-                  className="px-5 py-3 rounded-2xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer disabled:opacity-50"
+                  className="px-5 py-3 rounded-2xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
                 >
-                  {visualLoading ? 'Creating...' : 'Render Visual'}
+                  {visualLoading ? 'Creating...' : 'Render Goal Visual'}
                 </button>
               </div>
             </div>
@@ -4439,7 +5451,7 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                 <div className="relative z-10 flex flex-col items-center gap-4 w-full max-w-xs text-center">
                   <div className="w-10 h-10 rounded-full border-2 border-neutral-300 dark:border-neutral-700 border-t-neutral-900 dark:border-t-white animate-spin" />
                   <p className="text-xs font-medium text-neutral-600 dark:text-neutral-300 tracking-wide">
-                    Creating visual...
+                    Creating goal visual...
                   </p>
                   <div className="w-full h-1 rounded-full bg-neutral-200 dark:bg-neutral-800 overflow-hidden">
                     <div
@@ -4466,15 +5478,29 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
+                    onClick={() =>
+                      setEditorTarget({
+                        imageUrl: currentVisualResult,
+                        title: visualPrompt || 'Financial Goal Visual',
+                        targetType: 'preview',
+                        aspectRatio: resultRatio,
+                      })
+                    }
+                    className="px-3.5 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-bold cursor-pointer whitespace-nowrap"
+                  >
+                    View &amp; Edit
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => handleDownloadVisualAsset(currentVisualResult, visualPrompt)}
-                    className="px-3.5 py-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer"
+                    className="px-3.5 py-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-bold cursor-pointer whitespace-nowrap"
                   >
                     Download Image
                   </button>
                   <button
                     type="button"
                     onClick={handleSaveVisual}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer"
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
                   >
                     Save to Gallery
                   </button>
@@ -4487,18 +5513,31 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   </button>
                 </div>
               </div>
-              <div
+              <button
+                type="button"
+                onClick={() =>
+                  setEditorTarget({
+                    imageUrl: currentVisualResult,
+                    title: visualPrompt || 'Financial Goal Visual',
+                    targetType: 'preview',
+                    aspectRatio: resultRatio,
+                  })
+                }
+                aria-label="Click to inspect or edit generated financial goal visual"
                 className={`${
                   (VISUAL_ASPECT_RATIOS.find((r) => r.id === resultRatio) || VISUAL_ASPECT_RATIOS[0]).frameClass
-                } rounded-2xl overflow-hidden bg-neutral-950 max-h-[540px]`}
+                } block rounded-2xl overflow-hidden bg-neutral-950 max-h-[540px] relative group cursor-pointer`}
               >
                 <img
                   src={currentVisualResult}
                   alt={visualPrompt}
                   referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.01]"
                 />
-              </div>
+                <span className="absolute bottom-3 right-3 px-3 py-1.5 rounded-xl bg-black/75 text-white text-xs font-bold opacity-90 group-hover:opacity-100 transition-opacity">
+                  Click to Inspect &amp; Edit
+                </span>
+              </button>
             </div>
           )}
 
@@ -4509,12 +5548,44 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
                   key={g.id}
                   className="rounded-3xl overflow-hidden border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 flex flex-col"
                 >
-                  <div className="relative aspect-video bg-neutral-950 overflow-hidden">
-                    <img src={g.visualUrl} alt={g.title} className="w-full h-full object-cover" />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditorTarget({
+                        imageUrl: g.visualUrl,
+                        title: g.title || 'Financial Milestone',
+                        targetType: 'gallery',
+                        aspectRatio: '16:9',
+                      })
+                    }
+                    className="relative aspect-video bg-neutral-950 overflow-hidden group cursor-pointer text-left"
+                  >
+                    <img
+                      src={g.visualUrl}
+                      alt={g.title}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                    />
+                    <span className="absolute bottom-2.5 right-2.5 px-2.5 py-1 rounded-lg bg-black/75 text-white text-[11px] font-bold opacity-0 group-hover:opacity-100 transition-opacity">
+                      Inspect &amp; Edit
+                    </span>
+                  </button>
                   <div className="p-4 flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold line-clamp-2 flex-1">{g.title}</p>
                     <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditorTarget({
+                            imageUrl: g.visualUrl,
+                            title: g.title || 'Financial Milestone',
+                            targetType: 'gallery',
+                            aspectRatio: '16:9',
+                          })
+                        }
+                        className="px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-[11px] font-bold cursor-pointer"
+                      >
+                        Edit
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleDownloadVisualAsset(g.visualUrl, g.title)}
@@ -4535,73 +5606,30 @@ const GoalVisualizer: React.FC<GoalVisualizerProps> = ({ initialRoomCode, onRoom
               ))}
             </div>
           )}
+
+          {editorTarget && (
+            <GoalImageEditorModal
+              imageUrl={editorTarget.imageUrl}
+              initialTitle={editorTarget.title}
+              aspectRatio={editorTarget.aspectRatio}
+              onClose={() => setEditorTarget(null)}
+              onApplyToCurrent={
+                editorTarget.targetType === 'preview'
+                  ? (editedDataUrl, updatedTitle) => {
+                      setCurrentVisualResult(editedDataUrl);
+                      if (updatedTitle) setVisualPrompt(updatedTitle);
+                    }
+                  : undefined
+              }
+              onSaveCopy={async (editedDataUrl, updatedTitle) => {
+                const safeUrl = await ensureFirestoreSafeDataUrl(editedDataUrl, 650000);
+                addGoal({ title: updatedTitle, visualUrl: safeUrl, type: 'IMAGE' });
+                showToast('Saved edited financial goal visual to gallery.');
+              }}
+            />
+          )}
         </div>
       )}
-
-      {/* ================= PRINT & PDF EXPORT PREVIEW MODAL (SLIDES ONLY) ================= */}
-      {printPreviewHtml &&
-        createPortal(
-          <div
-            className="fixed inset-0 z-[9998] bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setPrintPreviewHtml(null);
-            }}
-          >
-            <div className="bg-white dark:bg-[#121216] border border-neutral-200 dark:border-neutral-800 rounded-3xl max-w-5xl w-full h-[88vh] flex flex-col overflow-hidden shadow-2xl">
-              <div className="px-6 py-4 border-b border-neutral-200 dark:border-neutral-800 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="font-display text-lg font-extrabold text-neutral-900 dark:text-white">
-                    Print &amp; PDF Presentation Preview
-                  </h3>
-                  <p className="text-xs text-neutral-500">
-                    Use Print / Save as PDF or download a standalone printable deck file.
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const frame = document.getElementById('vision-print-frame') as HTMLIFrameElement | null;
-                      if (frame?.contentWindow) {
-                        frame.contentWindow.focus();
-                        frame.contentWindow.print();
-                      }
-                    }}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold cursor-pointer"
-                  >
-                    Print / Save as PDF
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const safeName = (boardTitle || 'vision-deck').replace(/[^a-zA-Z0-9_-]/g, '-');
-                      triggerFileDownload(printPreviewHtml, `${safeName}-printable.html`, 'text/html');
-                      showToast('Downloaded printable presentation file.');
-                    }}
-                    className="px-4 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-bold cursor-pointer"
-                  >
-                    Download Printable HTML
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPrintPreviewHtml(null)}
-                    className="w-8 h-8 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-xs font-bold cursor-pointer"
-                    aria-label="Close preview"
-                  >
-                    &times;
-                  </button>
-                </div>
-              </div>
-              <iframe
-                id="vision-print-frame"
-                title="Vision Deck Print Preview"
-                srcDoc={printPreviewHtml}
-                className="flex-1 w-full bg-neutral-100"
-              />
-            </div>
-          </div>,
-          document.body
-        )}
     </div>
   );
 };

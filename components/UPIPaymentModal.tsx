@@ -108,9 +108,9 @@ export const UPIPaymentModal: React.FC<UPIPaymentModalProps> = ({
   };
 
   const modalContent = (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-enter overflow-y-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-neutral-950/45 dark:bg-black/65 backdrop-blur-sm overflow-y-auto" onClick={onClose}>
       <div
-        className="bg-white dark:bg-[#121215] rounded-[32px] max-w-lg w-full p-8 shadow-2xl border border-neutral-200/80 dark:border-neutral-800 flex flex-col relative overflow-hidden text-neutral-900 dark:text-white my-auto"
+        className="bg-white dark:bg-[#121215] rounded-[32px] max-w-lg w-full p-8 shadow-2xl border border-neutral-200/80 dark:border-neutral-800 flex flex-col relative overflow-hidden text-neutral-900 dark:text-white my-auto animate-enter"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

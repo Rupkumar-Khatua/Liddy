@@ -27,6 +27,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     clearAllData,
     openAuthModal,
     planTier,
+    planExpiresAt,
+    freeTriesRemaining,
   } = useFinMind();
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -136,7 +138,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   const cardBody = (
       <div className={`relative w-full bg-white dark:bg-[#121215] text-neutral-900 dark:text-neutral-100 rounded-[28px] border border-neutral-200/80 dark:border-neutral-800 overflow-hidden flex flex-col ${
-        isFullScreen ? 'max-w-4xl mx-auto shadow-xs' : 'max-w-xl shadow-2xl max-h-[90vh]'
+        isFullScreen ? 'max-w-4xl mx-auto shadow-xs' : 'max-w-xl shadow-2xl max-h-[90vh] animate-enter'
       }`}>
         
         {/* Header Bar */}
@@ -158,7 +160,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                   {isGuest ? 'LOCAL SESSION' : 'CLOUD SYNCED'}
                 </span>
                 <span className="px-2.5 py-0.5 rounded-md text-[10px] font-mono font-bold bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300">
-                  {planTier.toUpperCase()} PLAN
+                  {planTier === 'day' ? '1-DAY PASS' : `${planTier.toUpperCase()} PLAN`}
                 </span>
               </div>
               <p className="text-xs text-neutral-500 dark:text-neutral-400 font-mono mt-0.5">
@@ -329,7 +331,15 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
             <div className="user-profile-card modal-inner-card hover-border-glow flex items-center justify-between p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200/80 dark:border-neutral-800">
               <div>
                 <h5 className="text-xs font-bold text-neutral-900 dark:text-white">Plan &amp; Billing</h5>
-                <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 capitalize">{planTier} tier active</p>
+                <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                  {planTier === 'day'
+                    ? planExpiresAt
+                      ? `1-Day Pass active until ${new Date(planExpiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                      : '1-Day Unlimited Pass active'
+                    : planTier === 'pro'
+                    ? 'Liddy Pro unlimited active'
+                    : `Free plan · ${freeTriesRemaining} AI/Studio tries left`}
+                </p>
               </div>
               <button
                 type="button"
@@ -498,7 +508,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[9999] bg-black/75 backdrop-blur-md flex items-center justify-center p-4 md:p-6 animate-enter"
+      className="fixed inset-0 z-[9999] bg-neutral-950/45 dark:bg-black/65 backdrop-blur-sm flex items-center justify-center p-4 md:p-6"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

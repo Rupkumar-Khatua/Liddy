@@ -45,14 +45,14 @@ export const CompanyDetailModal: React.FC<CompanyDetailModalProps> = ({ company,
 
   const modalContent = (
     <div 
-      className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-3 md:p-8 animate-enter overflow-y-auto"
+      className="fixed inset-0 z-[9999] bg-neutral-950/45 dark:bg-black/65 backdrop-blur-sm flex items-center justify-center p-3 md:p-8 overflow-y-auto"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div 
         onClick={(e) => e.stopPropagation()}
-        className="relative w-full max-w-4xl bg-white dark:bg-[#121215] text-neutral-900 dark:text-neutral-100 rounded-[32px] shadow-2xl border border-neutral-200/80 dark:border-neutral-800 overflow-hidden flex flex-col max-h-[92vh] my-auto"
+        className="relative w-full max-w-4xl bg-white dark:bg-[#121215] text-neutral-900 dark:text-neutral-100 rounded-[32px] shadow-2xl border border-neutral-200/80 dark:border-neutral-800 overflow-hidden flex flex-col max-h-[92vh] my-auto animate-enter"
       >
         
         {/* Header Bar */}

@@ -33,12 +33,12 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   onClose,
   initialPreviewMode = false,
 }) => {
-  const { markInvoicePaid, deleteInvoice, updateInvoice, payoutConfig } = useFinMind();
+  const { markInvoicePaid, deleteInvoice, updateInvoice, payoutConfig, paymentRegion } = useFinMind();
   const [qrUrl, setQrUrl] = useState<string>('');
   const [copiedUri, setCopiedUri] = useState(false);
   const [isUpiOpen, setIsUpiOpen] = useState(false);
   const [showManualSettle, setShowManualSettle] = useState(false);
-  const [manualMethod, setManualMethod] = useState<'UPI' | 'CARD' | 'CASH'>('UPI');
+  const [manualMethod, setManualMethod] = useState<'UPI' | 'PAYPAL' | 'CARD' | 'CASH'>('UPI');
   const [manualRef, setManualRef] = useState('');
 
   // Preview & Print Format Controls
@@ -54,10 +54,13 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
   const [emailError, setEmailError] = useState<string | null>(null);
 
+  const effectiveRegion = paymentRegion;
+
   useEffect(() => {
     if (!invoice) return;
     setShowManualSettle(false);
     setManualRef('');
+    setManualMethod(paymentRegion === 'IN' ? 'UPI' : 'PAYPAL');
     setCopiedUri(false);
     setIsPreviewMode(initialPreviewMode);
     setPreviewTemplate(invoice.templateStyle || 'classic');
@@ -67,6 +70,11 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     setEmailError(null);
     setGmailConnected(hasGmailAccessToken());
     setGmailSender(getGmailTokenEmail() || '');
+
+    if (paymentRegion !== 'IN') {
+      setQrUrl('');
+      return;
+    }
 
     const activeUpi = invoice.upiId?.trim() || payoutConfig.upiId?.trim() || '';
     if (!activeUpi) {
@@ -79,7 +87,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     QRCode.toDataURL(uri, { width: 180, margin: 1 })
       .then((url) => setQrUrl(url))
       .catch(() => setQrUrl(''));
-  }, [invoice, initialPreviewMode, payoutConfig.upiId, payoutConfig.payeeName]);
+  }, [invoice, initialPreviewMode, payoutConfig.upiId, payoutConfig.payeeName, paymentRegion]);
 
   useEffect(() => {
     if (!invoice) return;
@@ -92,8 +100,8 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
 
   const printableHtml = useMemo(() => {
     if (!invoice) return '';
-    return buildPrintableInvoiceHtml(invoice, qrUrl, previewTemplate, previewPaper);
-  }, [invoice, qrUrl, previewTemplate, previewPaper]);
+    return buildPrintableInvoiceHtml(invoice, qrUrl, previewTemplate, previewPaper, paymentRegion);
+  }, [invoice, qrUrl, previewTemplate, previewPaper, paymentRegion]);
 
   if (!invoice) return null;
 
@@ -103,15 +111,21 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
     Boolean(invoice.dueDate) &&
     new Date(invoice.dueDate!).getTime() < new Date(new Date().toISOString().split('T')[0]).getTime();
 
-  const cur = invoice.currency || '₹';
+  const cur = invoice.currency || (effectiveRegion === 'IN' ? '₹' : '$');
   const resolvedUpiId = invoice.upiId?.trim() || payoutConfig.upiId?.trim() || '';
+  const resolvedPaypalId = invoice.paypalId?.trim() || payoutConfig.paypalMerchantEmail?.trim() || '';
   const resolvedPayee = invoice.payeeName?.trim() || invoice.senderName?.trim() || payoutConfig.payeeName || 'Billing Desk';
   const upiLink = resolvedUpiId
     ? `upi://pay?pa=${encodeURIComponent(resolvedUpiId)}&pn=${encodeURIComponent(resolvedPayee)}&am=${(Number(invoice.grandTotal) || 0).toFixed(2)}&tn=${encodeURIComponent(invoice.invoiceNumber)}&cu=INR`
     : '';
+  const paypalCurrency = cur === '€' ? 'EUR' : cur === '£' ? 'GBP' : 'USD';
+  const paypalCheckoutUrl = resolvedPaypalId
+    ? `https://www.paypal.com/cgi-bin/webscr?cmd=_xclick&business=${encodeURIComponent(resolvedPaypalId)}&amount=${(Number(invoice.grandTotal) || 0).toFixed(2)}&currency_code=${paypalCurrency}&item_name=${encodeURIComponent(`Invoice ${invoice.invoiceNumber}`)}`
+    : '';
 
-  const handleCopyUpiLink = () => {
-    navigator.clipboard.writeText(upiLink).catch(() => {});
+  const handleCopyPaymentLink = (urlToCopy: string) => {
+    if (!urlToCopy) return;
+    navigator.clipboard.writeText(urlToCopy).catch(() => {});
     setCopiedUri(true);
     setTimeout(() => setCopiedUri(false), 2000);
   };
@@ -248,11 +262,11 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
 
   const modalContent = (
     <div
-      className="fixed inset-0 z-[9990] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm overflow-y-auto animate-enter"
+      className="fixed inset-0 z-[9990] flex items-center justify-center p-4 bg-neutral-950/45 dark:bg-black/65 backdrop-blur-sm overflow-y-auto"
       onClick={onClose}
     >
       <div
-        className="bg-white dark:bg-[#121216] border border-neutral-200 dark:border-neutral-800 rounded-[28px] max-w-4xl w-full p-6 sm:p-8 shadow-2xl text-neutral-900 dark:text-neutral-100 my-auto space-y-6"
+        className="bg-white dark:bg-[#121216] border border-neutral-200 dark:border-neutral-800 rounded-[28px] max-w-4xl w-full p-6 sm:p-8 shadow-2xl text-neutral-900 dark:text-neutral-100 my-auto space-y-6 animate-enter"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Header */}
@@ -462,35 +476,69 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
               </div>
             </div>
 
-            {/* Totals + Dynamic UPI QR */}
+            {/* Totals + Regional Settlement Details */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start pt-1">
-              <div className="p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/60 flex items-center gap-4">
-                <div className="p-2 bg-white rounded-xl border border-neutral-200 shrink-0">
-                  {qrUrl ? (
-                    <img src={qrUrl} alt={`UPI QR for ${invoice.invoiceNumber}`} className="w-24 h-24 object-contain" />
-                  ) : (
-                    <div className="w-24 h-24 flex items-center justify-center text-[10px] text-neutral-400 font-mono">QR</div>
-                  )}
+              {effectiveRegion === 'IN' ? (
+                <div className="p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/60 flex items-center gap-4">
+                  <div className="p-2 bg-white rounded-xl border border-neutral-200 shrink-0">
+                    {qrUrl ? (
+                      <img src={qrUrl} alt={`UPI QR for ${invoice.invoiceNumber}`} className="w-24 h-24 object-contain" />
+                    ) : (
+                      <div className="w-24 h-24 flex items-center justify-center text-[10px] text-neutral-400 font-mono">QR</div>
+                    )}
+                  </div>
+                  <div className="space-y-1.5 text-xs min-w-0">
+                    <p className="font-bold text-neutral-900 dark:text-white">UPI Card &amp; QR Details</p>
+                    <p className="font-mono text-[11px] text-neutral-600 dark:text-neutral-300 truncate">
+                      UPI ID: {resolvedUpiId || 'Not configured in Settings'}
+                    </p>
+                    <p className="text-[11px] text-neutral-500 truncate">
+                      Payee: {resolvedPayee}
+                    </p>
+                    {upiLink && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyPaymentLink(upiLink)}
+                        className="text-xs font-bold text-indigo-600 dark:text-sky-400 hover:underline cursor-pointer pt-0.5"
+                      >
+                        {copiedUri ? '✓ UPI Link Copied' : 'Copy UPI Payment Link'}
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="space-y-1.5 text-xs min-w-0">
-                  <p className="font-bold text-neutral-900 dark:text-white">Payment Receiver Details</p>
-                  <p className="font-mono text-[11px] text-neutral-600 dark:text-neutral-300 truncate">
-                    UPI ID: {resolvedUpiId || 'Not configured in Settings'}
-                  </p>
-                  <p className="text-[11px] text-neutral-500 truncate">
-                    Payee: {resolvedPayee}
-                  </p>
-                  {upiLink && (
-                    <button
-                      type="button"
-                      onClick={handleCopyUpiLink}
-                      className="text-xs font-bold text-indigo-600 dark:text-sky-400 hover:underline cursor-pointer pt-0.5"
-                    >
-                      {copiedUri ? '✓ UPI Link Copied' : 'Copy UPI Payment Link'}
-                    </button>
-                  )}
+              ) : (
+                <div className="p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/60 flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-[#003087]/10 text-[#003087] dark:text-sky-400 font-extrabold text-sm flex items-center justify-center shrink-0">
+                    PP
+                  </div>
+                  <div className="space-y-1.5 text-xs min-w-0 flex-1">
+                    <p className="font-bold text-neutral-900 dark:text-white">PayPal Receiver Details</p>
+                    <p className="font-mono text-[11px] text-neutral-600 dark:text-neutral-300 truncate">
+                      PayPal ID: {resolvedPaypalId || 'Not configured on invoice'}
+                    </p>
+                    <p className="text-[11px] text-neutral-500 truncate">Payee: {resolvedPayee}</p>
+                    {paypalCheckoutUrl && (
+                      <div className="flex flex-wrap items-center gap-3 pt-0.5">
+                        <a
+                          href={paypalCheckoutUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs font-bold text-[#003087] dark:text-sky-400 hover:underline"
+                        >
+                          Open PayPal Checkout &rarr;
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleCopyPaymentLink(paypalCheckoutUrl)}
+                          className="text-xs font-semibold text-neutral-500 hover:text-neutral-900 dark:hover:text-white cursor-pointer"
+                        >
+                          {copiedUri ? '✓ Link Copied' : 'Copy Link'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between text-neutral-500 dark:text-neutral-400">
@@ -594,10 +642,14 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <select
                 value={manualMethod}
-                onChange={(e) => setManualMethod(e.target.value as 'UPI' | 'CARD' | 'CASH')}
+                onChange={(e) => setManualMethod(e.target.value as 'UPI' | 'PAYPAL' | 'CARD' | 'CASH')}
                 className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl px-3 py-2 text-xs font-bold"
               >
-                <option value="UPI">UPI / Instant Transfer</option>
+                {effectiveRegion === 'IN' ? (
+                  <option value="UPI">UPI / Instant Transfer</option>
+                ) : (
+                  <option value="PAYPAL">PayPal Settlement</option>
+                )}
                 <option value="CARD">Bank Wire / Card</option>
                 <option value="CASH">Cash Settled</option>
               </select>
@@ -605,7 +657,13 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                 type="text"
                 value={manualRef}
                 onChange={(e) => setManualRef(e.target.value)}
-                placeholder={manualMethod === 'CASH' ? 'Receipt / Note (optional)' : 'Payment Reference Number (required)'}
+                placeholder={
+                  manualMethod === 'CASH'
+                    ? 'Receipt / Note (optional)'
+                    : manualMethod === 'PAYPAL'
+                    ? 'PayPal Transaction ID (required)'
+                    : 'Payment Reference Number (required)'
+                }
                 className="sm:col-span-2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-700 rounded-xl px-3 py-2 text-xs font-mono"
               />
             </div>
@@ -635,15 +693,28 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
                 onClick={() => setShowManualSettle((prev) => !prev)}
                 className="px-4 py-2.5 rounded-xl border border-neutral-200 dark:border-neutral-700 hover:border-emerald-500 text-xs font-bold text-neutral-800 dark:text-neutral-200 cursor-pointer whitespace-nowrap"
               >
-                Mark Paid (Bank / Cash / Ref)
+                Mark Paid (Wire / Cash / Ref)
               </button>
-              <button
-                type="button"
-                onClick={() => setIsUpiOpen(true)}
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap shadow-xs"
-              >
-                Pay via UPI QR &rarr;
-              </button>
+              {effectiveRegion === 'IN' ? (
+                <button
+                  type="button"
+                  onClick={() => setIsUpiOpen(true)}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer whitespace-nowrap shadow-xs"
+                >
+                  Pay via UPI QR &rarr;
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualMethod('PAYPAL');
+                    setShowManualSettle(true);
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-[#003087] hover:bg-[#002569] text-white text-xs font-bold cursor-pointer whitespace-nowrap shadow-xs"
+                >
+                  Pay with PayPal &rarr;
+                </button>
+              )}
             </div>
           ) : (
             <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400">
@@ -653,7 +724,7 @@ export const InvoiceDetailModal: React.FC<InvoiceDetailModalProps> = ({
         </div>
       </div>
 
-      {isUpiOpen && (
+      {effectiveRegion === 'IN' && isUpiOpen && (
         <UPIPaymentModal
           isOpen={isUpiOpen}
           onClose={() => setIsUpiOpen(false)}

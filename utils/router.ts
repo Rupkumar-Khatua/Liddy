@@ -1,4 +1,4 @@
-import { WindowId } from '../types';
+import { PaymentRegion, WindowId } from '../types';
 
 export interface WindowRouteMeta {
   id: WindowId;
@@ -7,155 +7,270 @@ export interface WindowRouteMeta {
   shortLabel: string;
   title: string;
   description: string;
-  isPublicSeo: boolean;
 }
+
+export const REGION_PREFIX_MAP: Record<PaymentRegion, '/in' | '/intl'> = {
+  IN: '/in',
+  INTL: '/intl',
+};
 
 export const WINDOW_ROUTES: Record<WindowId, WindowRouteMeta> = {
   home: {
     id: 'home',
     path: '/',
-    label: 'Home',
+    label: 'Liddy Home',
     shortLabel: 'Home',
-    title: 'Liddy — Everyday Money, Investments & Smart Workspace',
+    title: 'Liddy — Personal Finance, Invoices, Live Markets & AI Studio',
     description:
-      'Manage your personal expenses, track your stock portfolio, create formatted invoices with UPI links, follow live market news, collaborate in video rooms and talk to your AI Finance Agent.',
-    isPublicSeo: true,
+      'Manage your personal expenses, track your stock portfolio, create formatted digital invoices, follow live market news, collaborate in video rooms and talk to your AI Finance Agent.',
   },
   overview: {
     id: 'overview',
-    path: '/workspace/overview',
-    label: 'Daily Overview',
-    shortLabel: 'Overview',
-    title: 'Personal Expenses, Stock Portfolio & Invoices | Liddy',
+    path: '/workspace/dashboard',
+    label: 'Dashboard & Portfolio',
+    shortLabel: 'Dashboard',
+    title: 'Financial Dashboard & Stock Portfolio | Liddy',
     description:
-      'Track where you spend your money, update your connected stock broking balance and manage digital invoices in one clear workspace.',
-    isPublicSeo: true,
+      'See where your money went, manage daily spends, connect your stock broking portfolio balance and stay on top of bills in real time.',
+  },
+  expenses: {
+    id: 'expenses',
+    path: '/workspace/expenses',
+    label: 'Daily Expenses',
+    shortLabel: 'Expenses',
+    title: 'Daily Expenses & Spending Categories | Liddy',
+    description:
+      'Review where your money went by category, log daily digital or cash spends and filter your personal ledger.',
   },
   invoices: {
     id: 'invoices',
     path: '/workspace/invoices',
-    label: 'Invoices & UPI Pay',
+    label: 'Invoices & Bills',
     shortLabel: 'Invoices',
-    title: 'Multi-Format Digital Invoices & UPI QR | Liddy',
+    title: 'Clean Swiss Paper Invoices & Bill-to-Digital Studio | Liddy',
     description:
-      'Create, preview and export formatted invoices in A4, US Letter and 80mm Thermal sizes with instant UPI QR pay links and email delivery.',
-    isPublicSeo: true,
+      'Generate crisp Swiss Paper invoices across A4, US Letter and 80mm thermal sizes or convert handwritten paper bills into editable digital documents.',
   },
   scanner: {
     id: 'scanner',
-    path: '/workspace/scanner',
-    label: 'Receipt Scanner & Expenses',
-    shortLabel: 'Expenses',
-    title: 'Receipt Capture & Personal Expense Ledger | Liddy',
+    path: '/workspace/scan-bill',
+    label: 'Scan Paper Bill',
+    shortLabel: 'Scan Bill',
+    title: 'Paper Bill & Receipt OCR to Digital Template | Liddy',
     description:
-      'Snap or upload bills and receipts to extract merchant, date, amount and personal spending categories automatically.',
-    isPublicSeo: true,
+      'Snap any printed or handwritten paper bill to extract itemized lines, taxes and totals straight into clean digital invoice templates.',
   },
   markets: {
     id: 'markets',
     path: '/workspace/markets',
-    label: 'Live Markets & News',
-    shortLabel: 'Markets & News',
-    title: 'Live Global Markets, Stocks & Financial News Wire | Liddy',
+    label: 'Market News & Stocks',
+    shortLabel: 'Markets',
+    title: 'Live Global Financial News Wire & Stock Tracker | Liddy',
     description:
-      'Live streaming stock quotes and financial news headlines across US, India, Europe, Asia and digital assets.',
-    isPublicSeo: true,
+      'Follow verified financial news, global indices, NSE/NYSE stock quotes and live headline feeds.',
   },
   agent: {
     id: 'agent',
-    path: '/workspace/agent',
-    label: 'AI Finance Agent',
+    path: '/workspace/ai-agent',
+    label: 'Liddy AI & Voice',
     shortLabel: 'AI Agent',
-    title: 'Liddy AI Finance Agent — Everyday Money, Investing & Voice | Liddy',
+    title: 'Liddy AI Chief Financial Officer & Voice Advisor | Liddy',
     description:
-      'Ask questions across personal budgeting, stock portfolios, uploaded bills, taxes and integrated hands-free voice briefings.',
-    isPublicSeo: true,
+      'Chat or speak live with your personal finance agent to organize spending, extract bills, generate CSV/PDF dashboards and analyze markets.',
   },
   vision: {
     id: 'vision',
-    path: '/workspace/vision',
-    label: 'Vision & Video Studio',
+    path: '/workspace/vision-studio',
+    label: 'Vision Studio',
     shortLabel: 'Vision Studio',
-    title: 'Vision Studio — Mind Maps, Slide Decks & Video Rooms | Liddy',
+    title: 'Vision Studio — Financial Goals, Mind Maps & Slides | Liddy',
     description:
-      'Collaborate in live HD video conferencing rooms, build interactive mind maps and export structured PowerPoint & PDF presentations.',
-    isPublicSeo: true,
+      'Visualize your financial goals, map budgets on shared mind-map boards, generate structured financial slide decks and collaborate over live HD video calls.',
   },
   pricing: {
     id: 'pricing',
-    path: '/workspace/pricing',
-    label: 'Plans & Checkout',
+    path: '/pricing',
+    label: 'Plans & Billing',
     shortLabel: 'Pricing',
-    title: 'Pricing — Starter Free, Liddy Pro & Team Plan | Liddy',
+    title: 'Starter Free, 1-Day Pass & Pro Plans | Liddy',
     description:
-      'Start free forever or upgrade via India UPI or International PayPal with Liddy Pro and Team Plan.',
-    isPublicSeo: true,
+      'Start free with 5 AI & Studio tries or unlock unlimited access via 1-Day Pass, Monthly or Yearly regional plans.',
   },
   settings: {
     id: 'settings',
     path: '/workspace/settings',
-    label: 'Workspace Settings',
+    label: 'Settings',
     shortLabel: 'Settings',
-    title: 'Workspace Settings, Currency & Localization | Liddy',
+    title: 'Workspace Preferences & Receiving Settings | Liddy',
     description:
-      'Customize light or dark appearance, 20+ languages, regional currency formatting and cloud sync controls.',
-    isPublicSeo: true,
+      'Customize currency, display language, accessibility contrast and receiving payment details for your invoices.',
   },
   profile: {
     id: 'profile',
-    path: '/workspace/profile',
-    label: 'Account & Plan',
+    path: '/workspace/account',
+    label: 'My Account',
     shortLabel: 'Account',
-    title: 'Account, Cloud Sync & Subscription | Liddy',
+    title: 'Account & Plan Management | Liddy',
     description:
-      'Manage your Liddy cloud sync, email receipt delivery, display identity and subscription plan.',
-    isPublicSeo: true,
+      'Manage your Liddy cloud sync, connected profile, active pass status and billing history.',
   },
   admin: {
     id: 'admin',
     path: '/admin',
-    label: 'Platform Admin Console',
+    label: 'Platform Operations',
     shortLabel: 'Admin',
-    title: 'Liddy Admin Console — Metrics, Security, Users & Payments',
-    description: 'Isolated platform administration portal.',
-    isPublicSeo: false,
+    title: 'Platform Operations Console | Liddy',
+    description:
+      'Monitor platform revenue, users, payment gateways, design assets, API telemetry and system incidents.',
   },
 };
 
 export const WORKSPACE_SWITCHER_WINDOWS: WindowId[] = [
   'overview',
+  'expenses',
   'invoices',
-  'scanner',
   'markets',
   'agent',
   'vision',
   'pricing',
 ];
 
-export function parsePathToWindow(pathname: string): WindowId {
-  const normalized = (pathname || '/').replace(/\/+$/, '') || '/';
-  if (normalized === '/workspace/voice') return 'agent';
+export function parseRegionFromPath(pathname: string): PaymentRegion | null {
+  const clean = (pathname || '/').trim().toLowerCase();
+  if (clean === '/in' || clean.startsWith('/in/')) return 'IN';
+  if (clean === '/intl' || clean.startsWith('/intl/')) return 'INTL';
+  return null;
+}
 
-  const entries = Object.values(WINDOW_ROUTES);
-  const exact = entries.find((r) => r.path === normalized);
-  if (exact) return exact.id;
+export function stripRegionPrefix(pathname: string): string {
+  const clean = (pathname || '/').trim();
+  const lower = clean.toLowerCase();
+  if (lower === '/in' || lower === '/intl') return '/';
+  if (lower.startsWith('/in/')) return clean.slice(3) || '/';
+  if (lower.startsWith('/intl/')) return clean.slice(5) || '/';
+  return clean || '/';
+}
 
-  if (normalized === '/workspace') return 'overview';
-  if (normalized.startsWith('/admin')) return 'admin';
+export function withRegionPrefix(basePath: string, region: PaymentRegion): string {
+  const stripped = stripRegionPrefix(basePath);
+  // Keep /admin standalone without region prefix
+  if (stripped === '/admin' || stripped.startsWith('/admin/')) {
+    return '/admin';
+  }
+  const prefix = REGION_PREFIX_MAP[region] || '/intl';
+  if (stripped === '/' || stripped === '') {
+    return prefix;
+  }
+  return `${prefix}${stripped.startsWith('/') ? stripped : `/${stripped}`}`;
+}
+
+export function getWindowRouteMeta(windowId: WindowId, region: PaymentRegion = 'INTL'): WindowRouteMeta {
+  const base = WINDOW_ROUTES[windowId] || WINDOW_ROUTES.home;
+  const localizedPath = windowId === 'admin' ? '/admin' : withRegionPrefix(base.path, region);
+
+  if (windowId === 'home') {
+    return {
+      ...base,
+      path: localizedPath,
+      description:
+        region === 'IN'
+          ? 'Manage personal expenses in INR, track your stock portfolio, create GST invoices with UPI QR links, follow live NSE/BSE news and work with your AI Finance Agent.'
+          : 'Manage personal expenses in USD, track your stock portfolio, create formatted international invoices with PayPal checkout, follow live global market news and work with your AI Finance Agent.',
+    };
+  }
+  if (windowId === 'expenses') {
+    return {
+      ...base,
+      path: localizedPath,
+      description:
+        region === 'IN'
+          ? 'Review where your money went by category, log daily UPI, card or cash spends in INR and filter your personal ledger.'
+          : 'Review where your money went by category, log daily card, PayPal or cash spends in USD and filter your personal ledger.',
+    };
+  }
+  if (windowId === 'invoices') {
+    return {
+      ...base,
+      path: localizedPath,
+      description:
+        region === 'IN'
+          ? 'Generate crisp Swiss Paper invoices across A4, Letter and 80mm POS sizes with instant UPI QR settlement or scan handwritten bills.'
+          : 'Generate crisp Swiss Paper invoices across A4, US Letter and 80mm POS sizes with PayPal settlement or scan paper bills.',
+    };
+  }
+  if (windowId === 'pricing') {
+    return {
+      ...base,
+      path: localizedPath,
+      description:
+        region === 'IN'
+          ? 'Start free with 5 AI & Studio tries or unlock unlimited access for ₹49 Day Pass, ₹149/mo or ₹999/yr via instant UPI.'
+          : 'Start free with 5 AI & Studio tries or unlock unlimited access for $2 Day Pass, $9/mo or $20/yr via PayPal.',
+    };
+  }
+
+  return {
+    ...base,
+    path: localizedPath,
+  };
+}
+
+export function parseRoomCodeFromLocation(pathname: string, search = '', hash = ''): string | null {
+  const cleanPath = stripRegionPrefix(pathname).replace(/\/+$/, '');
+  const joinMatch = cleanPath.match(/^\/join\/([A-Za-z0-9_-]{3,40})$/i);
+  if (joinMatch?.[1]) {
+    return joinMatch[1].toUpperCase();
+  }
+  const params = new URLSearchParams(search || '');
+  const qRoom = params.get('room');
+  if (qRoom && qRoom.trim()) {
+    return qRoom.trim().toUpperCase().slice(0, 40);
+  }
+  if (hash && hash.includes('room=')) {
+    const hParams = new URLSearchParams(hash.replace(/^#/, ''));
+    const hRoom = hParams.get('room');
+    if (hRoom && hRoom.trim()) return hRoom.trim().toUpperCase().slice(0, 40);
+  }
+  return null;
+}
+
+export function parsePathToWindow(pathname: string, search = '', hash = ''): WindowId {
+  const clean = stripRegionPrefix(pathname).replace(/\/+$/, '').toLowerCase() || '/';
+  if (clean.startsWith('/join/') || parseRoomCodeFromLocation(pathname, search, hash)) {
+    return 'vision';
+  }
+  if (clean === '/workspace/voice') {
+    return 'agent';
+  }
+  for (const meta of Object.values(WINDOW_ROUTES)) {
+    if (meta.path.toLowerCase() === clean) {
+      return meta.id;
+    }
+  }
   return 'home';
 }
 
-export function windowToPath(windowId: WindowId): string {
-  return WINDOW_ROUTES[windowId]?.path || '/';
+export function windowToPath(windowId: WindowId, region?: PaymentRegion): string {
+  const basePath = WINDOW_ROUTES[windowId]?.path || '/';
+  if (!region || windowId === 'admin') {
+    return basePath;
+  }
+  return withRegionPrefix(basePath, region);
 }
 
-export function parseRoomCodeFromSearch(search: string): string | null {
-  try {
-    const params = new URLSearchParams(search || '');
-    const raw = (params.get('room') || '').trim().toUpperCase();
-    if (/^[A-Z0-9_-]{3,24}$/.test(raw)) {
-      return raw;
-    }
-  } catch {}
-  return null;
+export function syncDocumentSeo(windowId: WindowId, region: PaymentRegion = 'INTL') {
+  if (typeof document === 'undefined') return;
+  const meta = getWindowRouteMeta(windowId, region);
+  document.title = meta.title;
+
+  const setMeta = (selector: string, content: string) => {
+    const el = document.querySelector(selector);
+    if (el) el.setAttribute('content', content);
+  };
+
+  setMeta('meta[name="description"]', meta.description);
+  setMeta('meta[property="og:title"]', meta.title);
+  setMeta('meta[property="og:description"]', meta.description);
+  setMeta('meta[name="twitter:title"]', meta.title);
+  setMeta('meta[name="twitter:description"]', meta.description);
 }
