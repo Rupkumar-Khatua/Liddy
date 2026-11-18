@@ -5405,9 +5405,44 @@ function extractConceptSearchQueries(prompt: string): string[] {
   return queries;
 }
 
+function isPrivateIPv4(host: string): boolean {
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const parts = m.slice(1).map((p) => Number(p));
+  if (parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 0) return true;
+  return false;
+}
+
+function isPrivateIPv6Literal(host: string): boolean {
+  const normalized = host.toLowerCase();
+  return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80:');
+}
+
+function isPrivateOrLocalHostname(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase();
+  if (!host) return true;
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (isPrivateIPv4(host)) return true;
+  if (isPrivateIPv6Literal(host)) return true;
+  return false;
+}
+
 async function fetchImageUrlAsDataUrl(targetUrl: string, timeoutMs = 9000): Promise<string | null> {
   try {
-    const resp = await fetch(targetUrl, {
+    const parsed = new URL(targetUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    if (!parsed.hostname) return null;
+    if (parsed.username || parsed.password) return null;
+    if (isPrivateOrLocalHostname(parsed.hostname)) return null;
+
+    const resp = await fetch(parsed.toString(), {
       headers: { 'User-Agent': 'LiddyVisionStudio/1.0' },
       signal: AbortSignal.timeout(timeoutMs),
     });
